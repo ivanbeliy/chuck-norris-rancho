@@ -1,0 +1,35 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Runtime
+store/
+data/
+logs/
+*.db
+*.db-journal
+
+# Node
+node_modules/
+dist/
+
+# Syncthing
+shared/
+.stfolder/
+.stversions/
+.syncthing*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/settings.local.json
