@@ -1,0 +1,9 @@
+# Force LF line endings for shell scripts (critical for Linux VM execution)
+*.sh text eol=lf
+
+# Keep other text files with auto-detection
+*.md text
+*.json text
+*.env text
+*.yml text
+*.yaml text
