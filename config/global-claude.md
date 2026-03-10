@@ -24,10 +24,10 @@ Files in /workspace/extra/shared/ sync to the user's Windows workstation.
 - inbox/ — files from the user
 - outbox/ — your files for the user
 
-## Message Formatting
+## Discord Formatting
 
-NEVER use markdown headings. Only use WhatsApp formatting:
-- *single asterisks* for bold
+Use standard Discord markdown:
+- **double asterisks** for bold
 - _underscores_ for italic
 - Bullet points
 - ```triple backticks``` for code

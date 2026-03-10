@@ -1,0 +1,19 @@
+[Unit]
+Description=NanoClaw Personal Assistant
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+UMask=0000
+Type=simple
+ExecStart=/usr/bin/node /root/nanoclaw/dist/index.js
+WorkingDirectory=/root/nanoclaw
+Restart=always
+RestartSec=5
+Environment=HOME=/root
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+StandardOutput=append:/root/nanoclaw/logs/nanoclaw.log
+StandardError=append:/root/nanoclaw/logs/nanoclaw.error.log
+
+[Install]
+WantedBy=multi-user.target

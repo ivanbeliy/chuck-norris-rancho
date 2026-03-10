@@ -71,10 +71,10 @@ Use <internal> tags for reasoning that shouldn't be sent to the user.
 The conversations/ folder contains searchable history of past conversations.
 When you learn something important, create files for structured data.
 
-## WhatsApp Formatting
+## Discord Formatting
 
-Do NOT use markdown headings (##). Only use:
-- *Bold* (single asterisks)
+Use standard Discord markdown:
+- **Bold** (double asterisks)
 - _Italic_ (underscores)
 - Bullet points
 - ```Code blocks``` (triple backticks)
