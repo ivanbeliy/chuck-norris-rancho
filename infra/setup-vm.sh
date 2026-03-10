@@ -1,13 +1,28 @@
 #!/bin/bash
 # Налаштування VM для WhiteClaw
-# Запускати: ssh whiteclaw 'bash -s' < infra/setup-vm.sh
+# Запускати: scp infra/setup-vm.sh whiteclaw:/tmp/ && ssh whiteclaw 'bash /tmp/setup-vm.sh'
 set -euo pipefail
 
-echo "=== [1/7] Оновлення системи ==="
+echo "=== [1/8] SSH на порт 443 (ISP може блокувати 22) ==="
+# Додати порт 443 до sshd_config якщо ще не додано
+if ! grep -q "^Port 443" /etc/ssh/sshd_config; then
+  sed -i 's/^#Port 22/Port 22/' /etc/ssh/sshd_config
+  echo "Port 443" >> /etc/ssh/sshd_config
+fi
+# Перезапустити SSH — це безпечно, бо поточна сесія не зірветься
+mkdir -p /run/sshd
+systemctl restart ssh.socket 2>/dev/null || systemctl restart ssh.service 2>/dev/null || true
+echo "SSH порти: $(grep '^Port' /etc/ssh/sshd_config | tr '\n' ' ')"
+
+echo "=== [2/8] Вимкнення ufw (файрвол через DigitalOcean) ==="
+ufw disable 2>/dev/null || true
+systemctl disable ufw 2>/dev/null || true
+
+echo "=== [3/8] Оновлення системи ==="
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
-echo "=== [2/7] Встановлення базових пакетів ==="
+echo "=== [4/8] Встановлення базових пакетів ==="
 apt-get install -y \
   curl \
   wget \
@@ -19,24 +34,23 @@ apt-get install -y \
   tmux \
   jq \
   sqlite3 \
-  ufw \
   apt-transport-https \
   ca-certificates \
   gnupg
 
-echo "=== [3/7] Встановлення Node.js 22 ==="
+echo "=== [5/8] Встановлення Node.js 22 ==="
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
 echo "Node.js: $(node --version)"
 echo "npm: $(npm --version)"
 
-echo "=== [4/7] Встановлення Docker ==="
+echo "=== [6/8] Встановлення Docker ==="
 curl -fsSL https://get.docker.com | sh
 systemctl enable docker
 systemctl start docker
 echo "Docker: $(docker --version)"
 
-echo "=== [5/7] Встановлення Syncthing ==="
+echo "=== [7/8] Встановлення Syncthing ==="
 curl -L -o /etc/apt/keyrings/syncthing-archive-keyring.gpg \
   https://syncthing.net/release-key.gpg
 echo "deb [signed-by=/etc/apt/keyrings/syncthing-archive-keyring.gpg] https://apt.syncthing.net/ syncthing stable" \
@@ -53,7 +67,7 @@ mkdir -p /root/.config/nanoclaw
 syncthing generate --config=/root/.config/syncthing
 
 # Відкрити GUI на всіх інтерфейсах для початкового парування
-# ВАЖЛИВО: після парування обмежити до localhost (див. нижче)
+# ВАЖЛИВО: після парування обмежити до localhost (див. RUNBOOK)
 sed -i 's|<address>127.0.0.1:8384</address>|<address>0.0.0.0:8384</address>|' \
   /root/.config/syncthing/config.xml
 
@@ -94,18 +108,20 @@ systemctl daemon-reload
 systemctl enable syncthing@root
 systemctl start syncthing@root
 
-echo "=== [6/7] Встановлення Claude Code CLI ==="
+echo "=== [8/8] Встановлення Claude Code CLI ==="
 npm install -g @anthropic-ai/claude-code
 echo "Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
 
-echo "=== [7/7] Створення робочих директорій ==="
+# Створити робочі директорії
 mkdir -p /root/nanoclaw
-mkdir -p /root/whiteclaw-config
+mkdir -p /root/nanoclaw/logs
 
 echo ""
 echo "=========================================="
 echo "  VM готова!"
 echo "=========================================="
+echo ""
+echo "SSH порти: $(grep '^Port' /etc/ssh/sshd_config | tr '\n' ' ')"
 echo ""
 echo "Syncthing Device ID:"
 syncthing -device-id 2>/dev/null || syncthing --device-id 2>/dev/null || echo "(запустіть syncthing -device-id окремо)"
@@ -120,9 +136,8 @@ echo "  (потім доступ через SSH тунель: ssh -L 8384:localh
 echo ""
 echo "Наступні кроки:"
 echo "1. Спарити Syncthing з Windows (Device ID вище)"
-echo "2. Форкнути nanoclaw: gh repo fork qwibitai/nanoclaw --clone --remote"
-echo "   або: git clone https://github.com/ivanbeliy/nanoclaw.git /root/nanoclaw"
-echo "3. cd /root/nanoclaw && npm install"
+echo "2. git clone https://github.com/qwibitai/nanoclaw.git /root/nanoclaw"
+echo "3. cd /root/nanoclaw && npm install && npm run build"
 echo "4. claude setup-token"
 echo "5. Створити .env (див. config/nanoclaw.env у репо WhiteClaw)"
 echo "6. claude → /setup"

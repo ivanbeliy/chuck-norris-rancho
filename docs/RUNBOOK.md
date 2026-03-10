@@ -1,5 +1,14 @@
 # WhiteClaw Runbook
 
+## Підключення
+
+SSH працює на порту **443** (порт 22 може блокуватися ISP):
+```bash
+ssh whiteclaw
+```
+
+Конфіг SSH (`~/.ssh/config`) має містити `Port 443`.
+
 ## Daily Operations
 
 ### Check status
@@ -20,17 +29,17 @@ bash scripts/restart.sh
 
 ## Troubleshooting
 
-### Agent not responding to WhatsApp messages
+### SSH connection timeout
+ISP може блокувати порт 22. VM слухає SSH на двох портах:
+- Порт 22 (стандартний)
+- Порт 443 (fallback, рекомендований)
+
+Якщо обидва не працюють — використати [DigitalOcean Console](https://cloud.digitalocean.com/droplets).
+
+### Agent not responding
 1. Check service: `ssh whiteclaw "systemctl status nanoclaw"`
 2. Check logs: `bash scripts/logs.sh error`
-3. Verify WhatsApp auth: `ssh whiteclaw "ls -la /root/nanoclaw/store/auth/creds.json"`
-4. Re-auth if needed: stop service, `cd /root/nanoclaw && npm run auth`, restart
-
-### WhatsApp disconnected
-WhatsApp may disconnect if the session is used elsewhere.
-1. On phone: WhatsApp → Settings → Linked Devices → check if WhiteClaw is linked
-2. If unlinked: `ssh whiteclaw` → stop NanoClaw → `cd /root/nanoclaw && rm -rf store/auth && npm run auth`
-3. Re-pair with pairing code
+3. Restart: `bash scripts/restart.sh`
 
 ### Container OOM / slow
 1. Check running containers: `ssh whiteclaw "docker ps"`
@@ -64,15 +73,14 @@ bash scripts/snapshot.sh
 
 ### Update VM packages
 ```bash
-ssh whiteclaw "apt update && apt upgrade -y"
+ssh whiteclaw "apt update && DEBIAN_FRONTEND=noninteractive apt upgrade -y"
 ```
 
-### Update agent instructions
-Edit `config/agent-claude.md` locally, then:
+### Lock down Syncthing GUI (after pairing)
 ```bash
-ssh whiteclaw "cp /root/whiteclaw-config/config/agent-claude.md /root/nanoclaw/groups/main/CLAUDE.md"
-bash scripts/restart.sh
+ssh whiteclaw "sed -i 's|0.0.0.0:8384|127.0.0.1:8384|' /root/.config/syncthing/config.xml && systemctl restart syncthing@root"
 ```
+Access via SSH tunnel: `ssh -L 8384:localhost:8384 whiteclaw`
 
 ## SSH Tunnel Cheat Sheet
 

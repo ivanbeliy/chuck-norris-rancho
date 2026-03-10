@@ -21,6 +21,7 @@ doctl compute firewall create \
   --droplet-ids "$DROPLET_ID" \
   --inbound-rules \
 "protocol:tcp,ports:22,address:0.0.0.0/0,address:::/0 \
+protocol:tcp,ports:443,address:0.0.0.0/0,address:::/0 \
 protocol:tcp,ports:22000,address:0.0.0.0/0,address:::/0 \
 protocol:udp,ports:22000,address:0.0.0.0/0,address:::/0 \
 protocol:udp,ports:21027,address:0.0.0.0/0,address:::/0" \
@@ -31,5 +32,5 @@ protocol:icmp,address:0.0.0.0/0,address:::/0"
 
 echo ""
 echo "=== Firewall created ==="
-echo "Inbound: SSH (22), Syncthing (22000 TCP/UDP, 21027 UDP)"
+echo "Inbound: SSH (22, 443), Syncthing (22000 TCP/UDP, 21027 UDP)"
 echo "Outbound: All allowed"

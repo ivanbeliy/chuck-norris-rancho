@@ -34,6 +34,7 @@ cat >> "$SSH_CONFIG" << EOF
 
 Host whiteclaw
     HostName $DROPLET_IP
+    Port 443
     User root
     IdentityFile $KEY_FILE
     ServerAliveInterval 60
