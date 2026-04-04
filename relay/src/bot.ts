@@ -30,7 +30,11 @@ export async function start(token: string): Promise<void> {
 
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    if (!message.content.trim()) return;
+    // Allow messages with text, replies (reference), or forwards (snapshots)
+    const hasContent = !!message.content.trim();
+    const hasReference = !!message.reference?.messageId;
+    const hasForward = !!message.messageSnapshots?.size;
+    if (!hasContent && !hasReference && !hasForward) return;
 
     // Only respond in registered channels
     const project = db.getProjectByChannelId(message.channel.id);

@@ -3,6 +3,59 @@ import * as db from './db.js';
 import * as spawner from './spawner.js';
 import * as fmt from './discord-format.js';
 
+/**
+ * Build the prompt including context from replied-to or forwarded messages.
+ */
+async function buildPrompt(message: Message): Promise<string> {
+  const parts: string[] = [];
+
+  // Handle reply — fetch the referenced message and include as context
+  if (message.reference?.messageId) {
+    try {
+      const ref = await message.channel.messages.fetch(
+        message.reference.messageId,
+      );
+      const author = ref.author?.tag || 'Unknown';
+      let refContent = ref.content || '';
+
+      // Include embed text if the referenced message has embeds
+      if (ref.embeds.length > 0) {
+        const embedTexts = ref.embeds
+          .map((e) => [e.title, e.description].filter(Boolean).join(': '))
+          .filter(Boolean);
+        if (embedTexts.length > 0) {
+          refContent += (refContent ? '\n' : '') + embedTexts.join('\n');
+        }
+      }
+
+      if (refContent) {
+        parts.push(
+          `[Replying to message from ${author}]\n${refContent}\n\n[Your message]`,
+        );
+      }
+    } catch {
+      // Can't fetch referenced message — proceed without context
+    }
+  }
+
+  // Handle forwarded messages (Discord message snapshots, discord.js v14.16+)
+  if (message.messageSnapshots?.size) {
+    for (const [, snap] of message.messageSnapshots) {
+      const fwdContent = snap.content || '';
+      const embedTexts = (snap.embeds || [])
+        .map((e) => [e.title, e.description].filter(Boolean).join(': '))
+        .filter(Boolean);
+      const combined = [fwdContent, ...embedTexts].filter(Boolean).join('\n');
+      if (combined) {
+        parts.push(`[Forwarded message]\n${combined}\n`);
+      }
+    }
+  }
+
+  parts.push(message.content);
+  return parts.join('\n');
+}
+
 export async function handleMessage(message: Message): Promise<void> {
   const project = db.getProjectByChannelId(message.channel.id);
   if (!project) return;
@@ -23,8 +76,10 @@ export async function handleMessage(message: Message): Promise<void> {
     await message.channel.sendTyping().catch(() => {});
   }
 
+  const prompt = await buildPrompt(message);
+
   const result = await spawner.spawnClaude({
-    prompt: message.content,
+    prompt,
     projectPath: project.project_path,
     claudeSessionId: session.claude_session_id,
     skipPermissions: project.skip_permissions,
@@ -42,7 +97,7 @@ export async function handleMessage(message: Message): Promise<void> {
     db.updateSessionClaudeId(session.id, null);
 
     const retry = await spawner.spawnClaude({
-      prompt: message.content,
+      prompt,
       projectPath: project.project_path,
       claudeSessionId: null,
       skipPermissions: project.skip_permissions,
