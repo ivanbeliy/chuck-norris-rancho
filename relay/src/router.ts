@@ -1,12 +1,84 @@
-import { Message } from 'discord.js';
+import { Message, Attachment } from 'discord.js';
+import { pipeline } from 'stream/promises';
+import { createWriteStream } from 'fs';
+import { mkdir } from 'fs/promises';
+import { Readable } from 'stream';
+import * as path from 'path';
 import * as db from './db.js';
 import * as spawner from './spawner.js';
 import * as fmt from './discord-format.js';
 
+const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25 MB
+
+interface SavedAttachment {
+  name: string;
+  filePath: string;
+  contentType: string | null;
+  size: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 /**
- * Build the prompt including context from replied-to or forwarded messages.
+ * Download Discord attachments to the project's .attachments/ directory.
  */
-async function buildPrompt(message: Message): Promise<string> {
+export async function downloadAttachments(
+  attachments: Message['attachments'],
+  projectPath: string,
+): Promise<SavedAttachment[]> {
+  if (!attachments.size) return [];
+
+  const dir = path.join(projectPath, '.attachments');
+  await mkdir(dir, { recursive: true });
+
+  const saved: SavedAttachment[] = [];
+  for (const [, att] of attachments) {
+    if (att.size > MAX_ATTACHMENT_SIZE) {
+      console.log(
+        `[${new Date().toISOString()}] Skipping attachment ${att.name} (${formatBytes(att.size)} > ${formatBytes(MAX_ATTACHMENT_SIZE)})`,
+      );
+      continue;
+    }
+
+    const fileName = `${Date.now()}-${att.name}`;
+    const filePath = path.join(dir, fileName);
+
+    try {
+      const response = await fetch(att.url);
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const readable = Readable.fromWeb(response.body as any);
+      await pipeline(readable, createWriteStream(filePath));
+
+      saved.push({
+        name: att.name,
+        filePath,
+        contentType: att.contentType,
+        size: att.size,
+      });
+    } catch (err) {
+      console.error(
+        `[${new Date().toISOString()}] Failed to download attachment ${att.name}:`,
+        err,
+      );
+    }
+  }
+
+  return saved;
+}
+
+/**
+ * Build the prompt including context from replied-to or forwarded messages and attachments.
+ */
+async function buildPrompt(
+  message: Message,
+  savedAttachments: SavedAttachment[] = [],
+): Promise<string> {
   const parts: string[] = [];
 
   // Handle reply — fetch the referenced message and include as context
@@ -52,6 +124,14 @@ async function buildPrompt(message: Message): Promise<string> {
     }
   }
 
+  // Include attachment info
+  if (savedAttachments.length > 0) {
+    const fileList = savedAttachments
+      .map((f) => `- ${f.filePath} (${f.name}, ${f.contentType || 'unknown'}, ${formatBytes(f.size)})`)
+      .join('\n');
+    parts.push(`[Attached files saved to disk]\n${fileList}\n`);
+  }
+
   parts.push(message.content);
   return parts.join('\n');
 }
@@ -76,7 +156,11 @@ export async function handleMessage(message: Message): Promise<void> {
     await message.channel.sendTyping().catch(() => {});
   }
 
-  const prompt = await buildPrompt(message);
+  const savedAttachments = await downloadAttachments(
+    message.attachments,
+    project.project_path,
+  );
+  const prompt = await buildPrompt(message, savedAttachments);
 
   const result = await spawner.spawnClaude({
     prompt,

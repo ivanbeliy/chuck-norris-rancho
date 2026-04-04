@@ -1,13 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Readable } from 'stream';
 
 vi.mock('../db.js');
 vi.mock('../spawner.js');
 vi.mock('../discord-format.js');
+vi.mock('fs/promises', () => ({
+  mkdir: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('fs', () => ({
+  createWriteStream: vi.fn().mockReturnValue({
+    on: vi.fn(),
+    once: vi.fn(),
+    emit: vi.fn(),
+    write: vi.fn(),
+    end: vi.fn(),
+    destroy: vi.fn(),
+  }),
+}));
+vi.mock('stream/promises', () => ({
+  pipeline: vi.fn().mockResolvedValue(undefined),
+}));
 
 import * as db from '../db.js';
 import * as spawner from '../spawner.js';
 import * as fmt from '../discord-format.js';
-import { handleMessage } from '../router.js';
+import { handleMessage, downloadAttachments } from '../router.js';
+
+function createFakeAttachments(
+  items: Array<{ name: string; url: string; size: number; contentType: string | null }> = [],
+) {
+  const entries = items.map((item, i) => [`att-${i}`, { id: `att-${i}`, ...item }] as const);
+  return new Map(entries);
+}
 
 function createFakeMessage(overrides: Record<string, unknown> = {}) {
   return {
@@ -22,6 +46,7 @@ function createFakeMessage(overrides: Record<string, unknown> = {}) {
     author: { tag: 'User#1234' },
     reference: null,
     messageSnapshots: null,
+    attachments: createFakeAttachments(),
     reply: vi.fn().mockResolvedValue(undefined),
     react: vi.fn().mockResolvedValue(undefined),
     reactions: {
@@ -224,5 +249,101 @@ describe('handleMessage', () => {
     const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
     expect(prompt).toContain('Alert: Server is down');
     expect(prompt).toContain('what happened?');
+  });
+
+  it('includes attachment info in prompt when files are attached', async () => {
+    // Mock global fetch for attachment download
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from('file content'))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const attachments = createFakeAttachments([
+      {
+        name: 'report.pdf',
+        url: 'https://cdn.discordapp.com/attachments/123/456/report.pdf',
+        size: 1024,
+        contentType: 'application/pdf',
+      },
+    ]);
+
+    const msg = createFakeMessage({
+      content: 'analyze this',
+      attachments,
+    });
+
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('Attached files saved to disk');
+    expect(prompt).toContain('report.pdf');
+    expect(prompt).toContain('application/pdf');
+    expect(prompt).toContain('analyze this');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('skips attachments over 25MB', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from(''))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const attachments = createFakeAttachments([
+      {
+        name: 'huge.zip',
+        url: 'https://cdn.discordapp.com/attachments/123/456/huge.zip',
+        size: 30 * 1024 * 1024, // 30MB
+        contentType: 'application/zip',
+      },
+    ]);
+
+    const msg = createFakeMessage({
+      content: 'process this',
+      attachments,
+    });
+
+    await handleMessage(msg);
+
+    // fetch should not be called for oversized attachment
+    expect(mockFetch).not.toHaveBeenCalled();
+    // Prompt should not contain attachment info
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).not.toContain('Attached files');
+    expect(prompt).toBe('process this');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('handles attachment download failure gracefully', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 404 }),
+    );
+
+    const attachments = createFakeAttachments([
+      {
+        name: 'gone.txt',
+        url: 'https://cdn.discordapp.com/attachments/123/456/gone.txt',
+        size: 100,
+        contentType: 'text/plain',
+      },
+    ]);
+
+    const msg = createFakeMessage({
+      content: 'read this',
+      attachments,
+    });
+
+    await handleMessage(msg);
+
+    // Should still proceed without attachment
+    expect(spawner.spawnClaude).toHaveBeenCalled();
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).not.toContain('Attached files');
+
+    vi.unstubAllGlobals();
   });
 });
