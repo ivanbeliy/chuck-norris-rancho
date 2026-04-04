@@ -1,15 +1,15 @@
-# WhiteClaw Runbook
+# Rancho Runbook
 
 ## Architecture
 
-WhiteClaw — infrastructure repository for deploying **Relay**, a Discord-to-Claude-Code transport layer.
+Rancho (chuck-norris-rancho) — infrastructure repository for deploying **Relay**, a Discord-to-Claude-Code transport layer.
 
 ```
 Windows (this repo)              Mac Mini M1 (Tailscale VPN)
 ├── relay/                       ├── ~/relay/              (Relay bot)
 ├── infra/                       ├── ~/shared/             (Syncthing sync)
 ├── scripts/                     ├── ~/projects/           (dev projects)
-└── docs/                        └── launchd: com.whiteclaw.relay
+└── docs/                        └── launchd: com.rancho.relay
 ```
 
 Components on Mac Mini:
@@ -24,12 +24,12 @@ Components on Mac Mini:
 ### Mac Mini (Tailscale VPN)
 
 ```bash
-ssh whiteclaw
+ssh rancho
 ```
 
 SSH config (`~/.ssh/config`):
 ```
-Host whiteclaw
+Host rancho
     HostName <TAILSCALE_IP>
     User i.beliy
     ServerAliveInterval 60
@@ -51,8 +51,8 @@ Setup: `bash scripts/setup-ssh.sh mac <TAILSCALE_IP>`
 ### Automated Setup (via SSH)
 
 ```bash
-scp infra/setup-mac.sh whiteclaw:/tmp/
-ssh whiteclaw "sed -i '' 's/\r$//' /tmp/setup-mac.sh && bash /tmp/setup-mac.sh"
+scp infra/setup-mac.sh rancho:/tmp/
+ssh rancho "sed -i '' 's/\r$//' /tmp/setup-mac.sh && bash /tmp/setup-mac.sh"
 ```
 
 The script automatically:
@@ -63,12 +63,12 @@ The script automatically:
 
 ### After setup-mac.sh
 
-1. `ssh whiteclaw "claude setup-token"` -> open URL in browser -> authorize -> paste code
-2. Fill in Discord bot token: `ssh whiteclaw "nano ~/relay/.env"`
+1. `ssh rancho "claude setup-token"` -> open URL in browser -> authorize -> paste code
+2. Fill in Discord bot token: `ssh rancho "nano ~/relay/.env"`
 3. Deploy Relay source: `bash scripts/deploy.sh`
-4. Pair Syncthing: `ssh -L 8384:localhost:8384 whiteclaw` -> http://localhost:8384
+4. Pair Syncthing: `ssh -L 8384:localhost:8384 rancho` -> http://localhost:8384
 5. Test: `bash scripts/status.sh` -> send message in Discord
-6. Reboot test: `ssh whiteclaw "sudo shutdown -r now"` -> wait 3 min -> `bash scripts/status.sh`
+6. Reboot test: `ssh rancho "sudo shutdown -r now"` -> wait 3 min -> `bash scripts/status.sh`
 
 ## Discord Bot Setup
 
@@ -122,7 +122,7 @@ Example: `/project add zbroya /Users/i.beliy/projects/zbroya.science #zbroya-sci
 
 ### Claude CLI errors
 
-1. OAuth token expired: `ssh whiteclaw "claude setup-token"`
+1. OAuth token expired: `ssh rancho "claude setup-token"`
 2. After re-auth, restart Relay: `bash scripts/restart.sh`
 
 ### Session stuck in "running" state
@@ -132,7 +132,7 @@ Relay automatically resets stuck sessions on startup. To force:
 bash scripts/restart.sh
 ```
 
-Or manually: `ssh whiteclaw "sqlite3 ~/relay/relay.db \"UPDATE sessions SET status='idle' WHERE status='running'\"""`
+Or manually: `ssh rancho "sqlite3 ~/relay/relay.db \"UPDATE sessions SET status='idle' WHERE status='running'\""`
 
 ### Bot connected but no messages received
 
@@ -147,9 +147,9 @@ Bot tab -> Privileged Gateway Intents -> Message Content Intent -> Save.
 
 ### Mac Mini: Relay not starting after reboot
 
-1. `ssh whiteclaw "launchctl print gui/\$(id -u)/com.whiteclaw.relay"`
-2. Logs: `ssh whiteclaw "tail -20 ~/relay/logs/relay.error.log"`
-3. Manual start: `ssh whiteclaw "cd ~/relay && node dist/index.js"`
+1. `ssh rancho "launchctl print gui/\$(id -u)/com.rancho.relay"`
+2. Logs: `ssh rancho "tail -20 ~/relay/logs/relay.error.log"`
+3. Manual start: `ssh rancho "cd ~/relay && node dist/index.js"`
 
 ## Maintenance
 
@@ -160,18 +160,18 @@ bash scripts/deploy.sh
 
 ### Update Claude Code CLI
 ```bash
-ssh whiteclaw "npm install -g @anthropic-ai/claude-code"
+ssh rancho "npm install -g @anthropic-ai/claude-code"
 bash scripts/restart.sh
 ```
 
 ### Backup database
 ```bash
-ssh whiteclaw "cp ~/relay/relay.db ~/relay/relay.db.bak"
+ssh rancho "cp ~/relay/relay.db ~/relay/relay.db.bak"
 ```
 
 ## SSH Tunnel Cheat Sheet
 
 ```bash
 # Syncthing GUI
-ssh -L 8384:localhost:8384 whiteclaw
+ssh -L 8384:localhost:8384 rancho
 ```

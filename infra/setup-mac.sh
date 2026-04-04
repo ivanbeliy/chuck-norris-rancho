@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup Mac Mini for Relay (Discord-to-Claude-Code transport)
 # Prerequisites: Homebrew, Tailscale, SSH — already configured (Phase A)
-# Run via SSH: scp infra/setup-mac.sh whiteclaw:/tmp/ && ssh whiteclaw 'bash /tmp/setup-mac.sh'
+# Run via SSH: scp infra/setup-mac.sh rancho:/tmp/ && ssh rancho 'bash /tmp/setup-mac.sh'
 set -euo pipefail
 
 MAC_USER="i.beliy"
@@ -93,14 +93,14 @@ launchctl bootout "gui/$(id -u)/com.whiteclaw.nanoclaw" 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/com.whiteclaw.colima" 2>/dev/null || true
 
 # Install Relay LaunchAgent
-cat > "$LAUNCH_AGENTS/com.whiteclaw.relay.plist" << 'PLIST_RELAY'
+cat > "$LAUNCH_AGENTS/com.rancho.relay.plist" << 'PLIST_RELAY'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.whiteclaw.relay</string>
+    <string>com.rancho.relay</string>
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/opt/node@22/bin/node</string>
@@ -131,13 +131,13 @@ cat > "$LAUNCH_AGENTS/com.whiteclaw.relay.plist" << 'PLIST_RELAY'
 </dict>
 </plist>
 PLIST_RELAY
-sed -i '' "s|__MAC_HOME__|$MAC_HOME|g" "$LAUNCH_AGENTS/com.whiteclaw.relay.plist"
+sed -i '' "s|__MAC_HOME__|$MAC_HOME|g" "$LAUNCH_AGENTS/com.rancho.relay.plist"
 
 # Load Relay service (only if built)
 if [ -f "$RELAY_SRC/dist/index.js" ] && [ -f "$RELAY_SRC/.env" ]; then
-  launchctl bootout "gui/$(id -u)/com.whiteclaw.relay" 2>/dev/null || true
+  launchctl bootout "gui/$(id -u)/com.rancho.relay" 2>/dev/null || true
   sleep 1
-  launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS/com.whiteclaw.relay.plist"
+  launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS/com.rancho.relay.plist"
   echo "Relay LaunchAgent loaded"
 else
   echo "WARNING: Relay not started — missing dist/index.js or .env"
@@ -150,7 +150,7 @@ echo "  Mac Mini ready!"
 echo "=========================================="
 echo ""
 echo "Services:"
-echo "  Relay:     launchctl print gui/$(id -u)/com.whiteclaw.relay"
+echo "  Relay:     launchctl print gui/$(id -u)/com.rancho.relay"
 echo "  Syncthing: brew services info syncthing"
 echo ""
 echo "Logs:"
@@ -158,7 +158,7 @@ echo "  tail -f $MAC_HOME/relay/logs/relay.log"
 echo "  tail -f $MAC_HOME/relay/logs/relay.error.log"
 echo ""
 echo "Syncthing GUI (via SSH tunnel):"
-echo "  ssh -L 8384:localhost:8384 whiteclaw"
+echo "  ssh -L 8384:localhost:8384 rancho"
 echo "  http://localhost:8384"
 echo ""
 echo "Next steps:"

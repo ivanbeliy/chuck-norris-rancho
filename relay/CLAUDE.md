@@ -1,6 +1,6 @@
 # Relay
 
-Thin Discord-to-Claude-Code transport layer. Part of the WhiteClaw infrastructure project.
+Thin Discord-to-Claude-Code transport layer. Part of the Rancho (chuck-norris-rancho) infrastructure project.
 
 ## Architecture
 

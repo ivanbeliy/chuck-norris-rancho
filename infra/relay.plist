@@ -4,7 +4,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.whiteclaw.relay</string>
+    <string>com.rancho.relay</string>
 
     <key>ProgramArguments</key>
     <array>

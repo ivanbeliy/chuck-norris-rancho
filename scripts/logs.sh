@@ -6,10 +6,10 @@ set -euo pipefail
 case "${1:-}" in
   error)
     echo "=== Error logs ==="
-    ssh whiteclaw "tail -f ~/relay/logs/relay.error.log"
+    ssh rancho "tail -f ~/relay/logs/relay.error.log"
     ;;
   *)
     echo "=== Relay logs ==="
-    ssh whiteclaw "tail -f ~/relay/logs/relay.log"
+    ssh rancho "tail -f ~/relay/logs/relay.log"
     ;;
 esac

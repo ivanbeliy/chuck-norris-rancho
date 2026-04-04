@@ -4,11 +4,11 @@
 set -euo pipefail
 
 echo "=== Restarting Relay ==="
-ssh whiteclaw << 'REMOTE'
+ssh rancho << 'REMOTE'
   if [ "$(uname)" = "Darwin" ]; then
-    launchctl kickstart -k "gui/$(id -u)/com.whiteclaw.relay"
+    launchctl kickstart -k "gui/$(id -u)/com.rancho.relay"
     sleep 2
-    launchctl print "gui/$(id -u)/com.whiteclaw.relay" 2>&1 | grep -E "state|pid"
+    launchctl print "gui/$(id -u)/com.rancho.relay" 2>&1 | grep -E "state|pid"
   else
     echo "Linux not supported in this version"
   fi

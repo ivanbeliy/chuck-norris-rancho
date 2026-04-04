@@ -1,4 +1,4 @@
-# WhiteClaw
+# Rancho
 
 Personal AI agent infrastructure powered by **Relay** — a thin Discord-to-Claude-Code transport layer running on Mac Mini M1, controlled via Discord.
 
@@ -10,7 +10,7 @@ Discord (phone/desktop)              Mac Mini M1 (via Tailscale VPN)
 | User messages in |  Discord API    | Relay (Node.js, discord.js)      |
 | project channels | <============> | -> child_process.spawn('claude') |
 |                  |                 | -> parse JSON output             |
-| WhiteClaw repo   |  SSH (Tailscale)| -> reply to Discord              |
+| Rancho repo      |  SSH (Tailscale)| -> reply to Discord              |
 | scripts/         | --------------> |                                  |
 | relay/           |                 | ~/relay/ (Relay bot)             |
 |                  |  Syncthing      | ~/projects/ (dev projects)       |
@@ -24,8 +24,8 @@ Relay is a dumb pipe. All intelligence lives inside native Claude Code CLI sessi
 
 1. Prepare Mac: enable SSH, auto-login, energy settings, install Homebrew & Tailscale (see RUNBOOK)
 2. From Windows: `bash scripts/setup-ssh.sh mac <TAILSCALE_IP>`
-3. Deploy: `scp infra/setup-mac.sh whiteclaw:/tmp/ && ssh whiteclaw 'bash /tmp/setup-mac.sh'`
-4. Configure: `ssh whiteclaw "claude setup-token"` + fill `DISCORD_BOT_TOKEN` in `~/relay/.env`
+3. Deploy: `scp infra/setup-mac.sh rancho:/tmp/ && ssh rancho 'bash /tmp/setup-mac.sh'`
+4. Configure: `ssh rancho "claude setup-token"` + fill `DISCORD_BOT_TOKEN` in `~/relay/.env`
 5. Deploy Relay: `bash scripts/deploy.sh`
 6. Test: `bash scripts/status.sh` + send Discord message
 

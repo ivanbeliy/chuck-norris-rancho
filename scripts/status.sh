@@ -6,7 +6,7 @@ set -euo pipefail
 echo "=== Relay System Status ==="
 echo ""
 
-ssh whiteclaw << 'REMOTE'
+ssh rancho << 'REMOTE'
   echo "--- System ---"
   uptime
   echo "RAM: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
@@ -18,7 +18,7 @@ ssh whiteclaw << 'REMOTE'
   echo ""
 
   echo "--- Relay ---"
-  launchctl print "gui/$(id -u)/com.whiteclaw.relay" 2>&1 | grep -E "state|pid" || echo "not loaded"
+  launchctl print "gui/$(id -u)/com.rancho.relay" 2>&1 | grep -E "state|pid" || echo "not loaded"
   echo ""
 
   echo "--- Projects ---"
