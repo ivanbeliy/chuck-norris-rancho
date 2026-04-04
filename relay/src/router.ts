@@ -17,6 +17,10 @@ export function getBufferedCount(projectPath: string): number {
   return messageBuffer.get(projectPath)?.length ?? 0;
 }
 
+export function clearBuffers(): void {
+  messageBuffer.clear();
+}
+
 interface SavedAttachment {
   name: string;
   filePath: string;
@@ -185,7 +189,19 @@ export async function handleMessage(message: Message): Promise<void> {
     return;
   }
 
-  // Process immediately
+  // Flush buffer: if messages accumulated while busy, combine with current
+  const buffered = messageBuffer.get(project.project_path);
+  if (buffered && buffered.length > 0) {
+    messageBuffer.delete(project.project_path);
+    buffered.push(message);
+    console.log(
+      `[${new Date().toISOString()}] Flushing ${buffered.length - 1} buffered + 1 new message for ${project.name}`,
+    );
+    await processBatch(buffered, project);
+    return;
+  }
+
+  // Process single message
   const session = db.getOrCreateSession(project.id);
   db.updateSessionStatus(session.id, 'running');
 
@@ -207,35 +223,42 @@ export async function handleMessage(message: Message): Promise<void> {
   await drainBuffer(project);
 }
 
+// ── Process batch of messages ────────────────────────────────
+
+async function processBatch(
+  messages: Message[],
+  project: db.Project,
+): Promise<void> {
+  const lastMessage = messages[messages.length - 1];
+  const session = db.getOrCreateSession(project.id);
+  db.updateSessionStatus(session.id, 'running');
+
+  await lastMessage.react('\u23F3').catch(() => {});
+  if ('sendTyping' in lastMessage.channel) {
+    await lastMessage.channel.sendTyping().catch(() => {});
+  }
+
+  const prompt = await buildBatchPrompt(messages, project.project_path);
+  const result = await runWithRetry(prompt, project, session);
+  await finalizeBatch(messages, session, result);
+
+  // Drain any messages that arrived during this batch
+  await drainBuffer(project);
+}
+
 // ── Drain buffered messages ──────────────────────────────────
 
 async function drainBuffer(project: db.Project): Promise<void> {
   const buffered = messageBuffer.get(project.project_path);
   if (!buffered || buffered.length === 0) return;
 
-  // Take all buffered messages at once
   messageBuffer.delete(project.project_path);
 
   console.log(
     `[${new Date().toISOString()}] Draining ${buffered.length} buffered message(s) for ${project.name}`,
   );
 
-  const lastMessage = buffered[buffered.length - 1];
-  const session = db.getOrCreateSession(project.id);
-  db.updateSessionStatus(session.id, 'running');
-
-  // Hourglass on the last message
-  await lastMessage.react('\u23F3').catch(() => {});
-  if ('sendTyping' in lastMessage.channel) {
-    await lastMessage.channel.sendTyping().catch(() => {});
-  }
-
-  const prompt = await buildBatchPrompt(buffered, project.project_path);
-  const result = await runWithRetry(prompt, project, session);
-  await finalizeBatch(buffered, session, result);
-
-  // Recurse: more messages may have arrived during this batch
-  await drainBuffer(project);
+  await processBatch(buffered, project);
 }
 
 // ── Spawn with session-error retry ───────────────────────────

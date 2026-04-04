@@ -24,7 +24,7 @@ vi.mock('stream/promises', () => ({
 import * as db from '../db.js';
 import * as spawner from '../spawner.js';
 import * as fmt from '../discord-format.js';
-import { handleMessage, downloadAttachments, getBufferedCount } from '../router.js';
+import { handleMessage, downloadAttachments, getBufferedCount, clearBuffers } from '../router.js';
 
 function createFakeAttachments(
   items: Array<{ name: string; url: string; size: number; contentType: string | null }> = [],
@@ -98,6 +98,7 @@ const errorResult: spawner.SpawnResult = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearBuffers();
   vi.mocked(db.getProjectByChannelId).mockReturnValue(fakeProject);
   vi.mocked(db.getOrCreateSession).mockReturnValue(fakeSession);
   vi.mocked(db.updateSessionStatus).mockReturnValue(undefined);
@@ -351,15 +352,7 @@ describe('handleMessage', () => {
 });
 
 describe('message buffer', () => {
-  // To test drain, we need handleMessage to process a message while
-  // there are already buffered messages. We simulate this by:
-  // 1. Buffering messages (isRunning=true)
-  // 2. Then processing a normal message (isRunning=false) — which
-  //    won't drain because the buffer was for a different "run".
-  // Instead, we test the full flow: buffer while busy, then when
-  // the next direct message is processed, the drain runs after.
-
-  it('drains buffered messages after current task completes', async () => {
+  it('combines buffered messages with next direct message', async () => {
     // Step 1: buffer two messages while busy
     vi.mocked(spawner.isRunning).mockReturnValue(true);
 
@@ -372,37 +365,33 @@ describe('message buffer', () => {
     expect(msg1.react).toHaveBeenCalledWith('\uD83D\uDCCB');
     expect(msg2.react).toHaveBeenCalledWith('\uD83D\uDCCB');
 
-    // Step 2: project becomes free, new message triggers processing + drain
+    // Step 2: project becomes free, new message flushes buffer
     vi.mocked(spawner.isRunning).mockReturnValue(false);
     vi.mocked(spawner.spawnClaude).mockResolvedValue(successResult);
 
     const directMsg = createFakeMessage({ content: 'direct message' });
     await handleMessage(directMsg);
 
-    // spawnClaude should be called twice: once for direct, once for batch
-    expect(spawner.spawnClaude).toHaveBeenCalledTimes(2);
+    // Single batch call with all 3 messages (buffered + new)
+    expect(spawner.spawnClaude).toHaveBeenCalledTimes(1);
 
-    // First call: direct message
-    expect(vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt).toBe(
-      'direct message',
-    );
-
-    // Second call: batch with both buffered messages
-    const batchPrompt = vi.mocked(spawner.spawnClaude).mock.calls[1][0].prompt;
-    expect(batchPrompt).toContain('first queued');
-    expect(batchPrompt).toContain('second queued');
-    expect(batchPrompt).toContain('2 more messages');
-    expect(batchPrompt).toContain('[Message 1/2]');
-    expect(batchPrompt).toContain('[Message 2/2]');
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('first queued');
+    expect(prompt).toContain('second queued');
+    expect(prompt).toContain('direct message');
+    expect(prompt).toContain('3 more messages');
+    expect(prompt).toContain('[Message 1/3]');
+    expect(prompt).toContain('[Message 2/3]');
+    expect(prompt).toContain('[Message 3/3]');
 
     // Buffer should be empty now
     expect(getBufferedCount('/tmp/proj')).toBe(0);
 
-    // Last buffered message should have received the reply
-    expect(msg2.reply).toHaveBeenCalled();
+    // Reply goes to the last message (direct)
+    expect(directMsg.reply).toHaveBeenCalled();
   });
 
-  it('handles single buffered message without numbering', async () => {
+  it('combines single buffered message with direct message', async () => {
     vi.mocked(spawner.isRunning).mockReturnValue(true);
 
     const queued = createFakeMessage({ content: 'solo queued' });
@@ -414,9 +403,13 @@ describe('message buffer', () => {
     const direct = createFakeMessage({ content: 'trigger' });
     await handleMessage(direct);
 
-    const batchPrompt = vi.mocked(spawner.spawnClaude).mock.calls[1][0].prompt;
-    expect(batchPrompt).toContain('solo queued');
-    expect(batchPrompt).toContain('1 more message');
-    expect(batchPrompt).not.toContain('[Message 1/1]');
+    expect(spawner.spawnClaude).toHaveBeenCalledTimes(1);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('solo queued');
+    expect(prompt).toContain('trigger');
+    expect(prompt).toContain('2 more messages');
+    expect(prompt).toContain('[Message 1/2]');
+    expect(prompt).toContain('[Message 2/2]');
   });
 });
