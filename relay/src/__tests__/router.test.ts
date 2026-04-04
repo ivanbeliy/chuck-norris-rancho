@@ -43,7 +43,8 @@ function createFakeMessage(overrides: Record<string, unknown> = {}) {
       },
       sendTyping: vi.fn().mockResolvedValue(undefined),
     },
-    author: { tag: 'User#1234' },
+    author: { tag: 'User#1234', username: 'testuser', displayName: 'TestUser' },
+    member: { displayName: 'TestUser' },
     reference: null,
     messageSnapshots: null,
     attachments: createFakeAttachments(),
@@ -137,7 +138,7 @@ describe('handleMessage', () => {
     expect(db.updateSessionStatus).toHaveBeenCalledWith('sess-1', 'running');
     expect(spawner.spawnClaude).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: 'do something',
+        prompt: '[TestUser] do something',
         projectPath: '/tmp/proj',
         claudeSessionId: 'claude-1',
       }),
@@ -190,7 +191,7 @@ describe('handleMessage', () => {
   it('includes referenced message context in prompt on reply', async () => {
     const refMessage = {
       content: 'original message',
-      author: { tag: 'Author#5678' },
+      author: { tag: 'Author#5678', username: 'author5678', displayName: 'Author5678' },
       embeds: [],
     };
 
@@ -204,7 +205,7 @@ describe('handleMessage', () => {
 
     const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
     expect(prompt).toContain('original message');
-    expect(prompt).toContain('Author#5678');
+    expect(prompt).toContain('Author5678');
     expect(prompt).toContain('follow up');
   });
 
@@ -235,7 +236,7 @@ describe('handleMessage', () => {
   it('includes embed text from referenced message', async () => {
     const refMessage = {
       content: '',
-      author: { tag: 'Bot#0000' },
+      author: { tag: 'Bot#0000', username: 'bot0000', displayName: 'Bot' },
       embeds: [
         { title: 'Alert', description: 'Server is down' },
       ],
@@ -315,7 +316,7 @@ describe('handleMessage', () => {
     // Prompt should not contain attachment info
     const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
     expect(prompt).not.toContain('Attached files');
-    expect(prompt).toBe('process this');
+    expect(prompt).toBe('[TestUser] process this');
 
     vi.unstubAllGlobals();
   });
@@ -380,9 +381,9 @@ describe('message buffer', () => {
     expect(prompt).toContain('second queued');
     expect(prompt).toContain('direct message');
     expect(prompt).toContain('3 more messages');
-    expect(prompt).toContain('[Message 1/3]');
-    expect(prompt).toContain('[Message 2/3]');
-    expect(prompt).toContain('[Message 3/3]');
+    expect(prompt).toContain('[Message 1/3 from TestUser]');
+    expect(prompt).toContain('[Message 2/3 from TestUser]');
+    expect(prompt).toContain('[Message 3/3 from TestUser]');
 
     // Buffer should be empty now
     expect(getBufferedCount('/tmp/proj')).toBe(0);
@@ -409,7 +410,42 @@ describe('message buffer', () => {
     expect(prompt).toContain('solo queued');
     expect(prompt).toContain('trigger');
     expect(prompt).toContain('2 more messages');
-    expect(prompt).toContain('[Message 1/2]');
-    expect(prompt).toContain('[Message 2/2]');
+    expect(prompt).toContain('[Message 1/2 from TestUser]');
+    expect(prompt).toContain('[Message 2/2 from TestUser]');
+  });
+
+  it('attributes batch messages to correct authors', async () => {
+    vi.mocked(spawner.isRunning).mockReturnValue(true);
+
+    const msg1 = createFakeMessage({
+      content: 'hello',
+      author: { username: 'alice', displayName: 'Alice' },
+      member: { displayName: 'Alice' },
+    });
+    const msg2 = createFakeMessage({
+      content: 'world',
+      author: { username: 'bob', displayName: 'Bob' },
+      member: { displayName: 'Bob' },
+    });
+    await handleMessage(msg1);
+    await handleMessage(msg2);
+
+    vi.mocked(spawner.isRunning).mockReturnValue(false);
+    vi.mocked(spawner.spawnClaude).mockResolvedValue(successResult);
+
+    const direct = createFakeMessage({
+      content: 'trigger',
+      author: { username: 'carol', displayName: 'Carol' },
+      member: { displayName: 'Carol' },
+    });
+    await handleMessage(direct);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('[Message 1/3 from Alice]');
+    expect(prompt).toContain('hello');
+    expect(prompt).toContain('[Message 2/3 from Bob]');
+    expect(prompt).toContain('world');
+    expect(prompt).toContain('[Message 3/3 from Carol]');
+    expect(prompt).toContain('trigger');
   });
 });

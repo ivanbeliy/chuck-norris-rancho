@@ -34,6 +34,12 @@ interface SavedAttachment {
   size: number;
 }
 
+function getAuthorName(message: Message): string {
+  return message.member?.displayName
+    || message.author.displayName
+    || message.author.username;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
@@ -95,6 +101,7 @@ export async function downloadAttachments(
 export async function buildPrompt(
   message: Message,
   savedAttachments: SavedAttachment[] = [],
+  includeAuthor: boolean = true,
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -104,7 +111,7 @@ export async function buildPrompt(
       const ref = await message.channel.messages.fetch(
         message.reference.messageId,
       );
-      const author = ref.author?.tag || 'Unknown';
+      const author = ref.author?.displayName || ref.author?.username || 'Unknown';
       let refContent = ref.content || '';
 
       // Include embed text if the referenced message has embeds
@@ -149,7 +156,11 @@ export async function buildPrompt(
     parts.push(`[Attached files saved to disk]\n${fileList}\n`);
   }
 
-  parts.push(message.content);
+  if (includeAuthor) {
+    parts.push(`[${getAuthorName(message)}] ${message.content}`);
+  } else {
+    parts.push(message.content);
+  }
   return parts.join('\n');
 }
 
@@ -169,12 +180,15 @@ async function buildBatchPrompt(
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const savedAtts = await downloadAttachments(msg.attachments, projectPath);
-    const msgPrompt = await buildPrompt(msg, savedAtts);
-    parts.push(
-      messages.length > 1
-        ? `[Message ${i + 1}/${messages.length}]\n${msgPrompt}`
-        : msgPrompt,
-    );
+    const authorName = getAuthorName(msg);
+
+    if (messages.length > 1) {
+      const msgPrompt = await buildPrompt(msg, savedAtts, false);
+      parts.push(`[Message ${i + 1}/${messages.length} from ${authorName}]\n${msgPrompt}`);
+    } else {
+      const msgPrompt = await buildPrompt(msg, savedAtts);
+      parts.push(msgPrompt);
+    }
   }
 
   return parts.join('\n\n');
