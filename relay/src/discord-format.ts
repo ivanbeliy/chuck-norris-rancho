@@ -4,13 +4,9 @@ const MAX_CHUNKS = 5;
 
 export function formatResult(
   result: string,
-  costUsd: string | null,
+  _costUsd: string | null,
 ): string {
-  let output = result;
-  if (costUsd) {
-    output += `\n\n_Cost: $${costUsd}_`;
-  }
-  return output;
+  return result;
 }
 
 export function formatError(error: string): string {

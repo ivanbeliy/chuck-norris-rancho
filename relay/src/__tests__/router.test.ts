@@ -105,8 +105,8 @@ beforeEach(() => {
   vi.mocked(db.updateSessionClaudeId).mockReturnValue(undefined);
   vi.mocked(spawner.isRunning).mockReturnValue(false);
   vi.mocked(spawner.spawnClaude).mockResolvedValue(successResult);
-  vi.mocked(fmt.formatResult).mockReturnValue('Done!\n\n_Cost: $0.05_');
-  vi.mocked(fmt.splitMessage).mockReturnValue(['Done!\n\n_Cost: $0.05_']);
+  vi.mocked(fmt.formatResult).mockReturnValue('Done!');
+  vi.mocked(fmt.splitMessage).mockReturnValue(['Done!']);
   vi.mocked(fmt.formatError).mockReturnValue('**Error:**\n```\nSomething broke\n```');
 });
 
@@ -144,7 +144,7 @@ describe('handleMessage', () => {
     );
     expect(db.updateSessionClaudeId).toHaveBeenCalledWith('sess-1', 'claude-2');
     expect(db.updateSessionStatus).toHaveBeenCalledWith('sess-1', 'idle');
-    expect(msg.reply).toHaveBeenCalledWith('Done!\n\n_Cost: $0.05_');
+    expect(msg.reply).toHaveBeenCalledWith('Done!');
   });
 
   it('replies with error on spawn failure', async () => {

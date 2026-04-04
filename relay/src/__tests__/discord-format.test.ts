@@ -2,11 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { formatResult, formatError, splitMessage } from '../discord-format.js';
 
 describe('formatResult', () => {
-  it('appends cost when provided', () => {
-    expect(formatResult('Done', '0.05')).toBe('Done\n\n_Cost: $0.05_');
-  });
-
-  it('returns result unchanged when cost is null', () => {
+  it('returns result as-is', () => {
+    expect(formatResult('Done', '0.05')).toBe('Done');
     expect(formatResult('Done', null)).toBe('Done');
   });
 });
