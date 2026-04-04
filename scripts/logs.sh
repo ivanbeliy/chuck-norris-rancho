@@ -1,12 +1,15 @@
 #!/bin/bash
-# Перегляд логів NanoClaw у реальному часі
-# Запускати: bash scripts/logs.sh [error]
+# View Relay logs in real-time
+# Run from Windows: bash scripts/logs.sh [error]
 set -euo pipefail
 
-if [ "${1:-}" = "error" ]; then
-  echo "=== Error logs ==="
-  ssh whiteclaw "tail -f /root/nanoclaw/logs/nanoclaw.error.log"
-else
-  echo "=== NanoClaw logs ==="
-  ssh whiteclaw "tail -f /root/nanoclaw/logs/nanoclaw.log"
-fi
+case "${1:-}" in
+  error)
+    echo "=== Error logs ==="
+    ssh whiteclaw "tail -f ~/relay/logs/relay.error.log"
+    ;;
+  *)
+    echo "=== Relay logs ==="
+    ssh whiteclaw "tail -f ~/relay/logs/relay.log"
+    ;;
+esac

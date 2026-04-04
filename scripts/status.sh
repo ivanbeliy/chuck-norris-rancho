@@ -1,37 +1,43 @@
 #!/bin/bash
-# Повний статус системи WhiteClaw
-# Запускати: bash scripts/status.sh
+# Full system status for Relay
+# Run from Windows: bash scripts/status.sh
 set -euo pipefail
 
-echo "=== WhiteClaw System Status ==="
+echo "=== Relay System Status ==="
 echo ""
 
 ssh whiteclaw << 'REMOTE'
   echo "--- System ---"
   uptime
-  free -h | head -2
+  echo "RAM: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
   df -h / | tail -1
   echo ""
 
-  echo "--- Docker ---"
-  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "Docker not running"
-  echo "Images: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep nanoclaw | head -3)"
+  echo "--- Claude Code ---"
+  claude --version 2>/dev/null || echo "not installed"
   echo ""
 
-  echo "--- NanoClaw ---"
-  systemctl is-active nanoclaw 2>/dev/null || echo "not running"
-  systemctl status nanoclaw --no-pager 2>/dev/null | grep -E "Active:|Memory:|CPU:" || true
+  echo "--- Relay ---"
+  launchctl print "gui/$(id -u)/com.whiteclaw.relay" 2>&1 | grep -E "state|pid" || echo "not loaded"
+  echo ""
+
+  echo "--- Projects ---"
+  if [ -f ~/relay/relay.db ]; then
+    sqlite3 ~/relay/relay.db "SELECT '  ' || p.name || ' [' || COALESCE(s.status, 'no session') || '] — ' || p.project_path FROM projects p LEFT JOIN sessions s ON p.id = s.project_id ORDER BY p.name;" 2>/dev/null || echo "  (db error)"
+  else
+    echo "  (no database yet)"
+  fi
   echo ""
 
   echo "--- Syncthing ---"
-  systemctl is-active syncthing@root 2>/dev/null || echo "not running"
+  brew services info syncthing 2>/dev/null | grep -E "Running|Status" || echo "checking..."
   echo ""
 
   echo "--- Shared Folder ---"
-  echo "Files in inbox: $(ls /root/shared/inbox/ 2>/dev/null | wc -l)"
-  echo "Files in outbox: $(ls /root/shared/outbox/ 2>/dev/null | wc -l)"
+  echo "Files in inbox: $(ls ~/shared/inbox/ 2>/dev/null | wc -l | tr -d ' ')"
+  echo "Files in outbox: $(ls ~/shared/outbox/ 2>/dev/null | wc -l | tr -d ' ')"
   echo ""
 
   echo "--- Recent Logs (last 10 lines) ---"
-  tail -10 /root/nanoclaw/logs/nanoclaw.log 2>/dev/null || echo "No logs yet"
+  tail -10 ~/relay/logs/relay.log 2>/dev/null || echo "No logs yet"
 REMOTE

@@ -1,189 +1,88 @@
 # WhiteClaw Runbook
 
-## Архітектура
+## Architecture
 
-WhiteClaw — інфраструктурний репозиторій для розгортання [NanoClaw](https://github.com/qwibitai/nanoclaw) AI-асистента на DigitalOcean VM з Discord-інтеграцією.
+WhiteClaw — infrastructure repository for deploying **Relay**, a Discord-to-Claude-Code transport layer.
 
 ```
-Windows (цей репо)              DigitalOcean VM (164.90.233.82)
-├── infra/                      ├── /root/nanoclaw/          (NanoClaw + Discord)
-├── config/                     ├── /root/shared/            (Syncthing sync)
-├── scripts/                    ├── /root/projects/          (dev projects)
-└── docs/                       └── systemd: nanoclaw.service
+Windows (this repo)              Mac Mini M1 (Tailscale VPN)
+├── relay/                       ├── ~/relay/              (Relay bot)
+├── infra/                       ├── ~/shared/             (Syncthing sync)
+├── scripts/                     ├── ~/projects/           (dev projects)
+└── docs/                        └── launchd: com.whiteclaw.relay
 ```
 
-Компоненти на VM:
-- **NanoClaw** — оркестратор, приймає повідомлення з Discord, запускає Claude агентів у Docker-контейнерах
-- **Docker** — ізоляція агентів (`nanoclaw-agent:latest` image)
-- **Syncthing** — синхронізація файлів між VM та Windows
-- **Claude Code CLI** — для інтерактивного налаштування (`/setup`, `/add-discord`)
+Components on Mac Mini:
+- **Relay** — Node.js Discord bot, spawns `claude -p` CLI sessions
+- **Claude Code CLI** — AI agent, authorized via OAuth subscription
+- **Syncthing** — file sync between Mac and Windows
+- **Tailscale** — VPN for remote access
+- **launchd** — auto-start service
 
-## Підключення
+## Connection
 
-SSH працює на порту **443** (порт 22 блокується ISP):
+### Mac Mini (Tailscale VPN)
+
 ```bash
 ssh whiteclaw
 ```
 
-Конфіг SSH (`~/.ssh/config`):
+SSH config (`~/.ssh/config`):
 ```
 Host whiteclaw
-    HostName 164.90.233.82
-    Port 443
-    User root
-    IdentityFile ~/.ssh/whiteclaw_ed25519
+    HostName <TAILSCALE_IP>
+    User i.beliy
     ServerAliveInterval 60
     ServerAliveCountMax 3
 ```
 
-## Розгортання з нуля
+Setup: `bash scripts/setup-ssh.sh mac <TAILSCALE_IP>`
 
-### 1. Створити дроплет + фаєрвол
-```bash
-bash infra/provision-droplet.sh
-bash infra/firewall.sh
-```
+## Deployment
 
-### 2. Налаштувати SSH на порт 443
+### Prerequisites (physically on Mac, ~12 min)
 
-Через DigitalOcean Console (бо порт 22 може бути заблокований ISP):
-```bash
-echo "Port 443" >> /etc/ssh/sshd_config
-mkdir -p /run/sshd
-systemctl restart ssh.socket 2>/dev/null || systemctl restart ssh.service
-```
+1. System Settings -> General -> Sharing -> **Remote Login** -> ON
+2. System Settings -> Users & Groups -> **Automatic Login** -> select user
+3. System Settings -> Energy Saver -> **Prevent sleep**, **Wake for network**, **Auto restart after power failure**
+4. Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+5. Install Tailscale: `brew install --cask tailscale` -> log in -> `tailscale up --ssh`
 
-Потім з Windows: `bash scripts/setup-ssh.sh <DROPLET_IP>`
-
-### 3. Провізіонувати VM
-```bash
-scp infra/setup-vm.sh whiteclaw:/tmp/
-ssh whiteclaw "sed -i 's/\r$//' /tmp/setup-vm.sh && bash /tmp/setup-vm.sh"
-```
-
-### 4. Розгорнути NanoClaw
-```bash
-ssh whiteclaw
-git clone https://github.com/qwibitai/nanoclaw.git /root/nanoclaw
-cd /root/nanoclaw
-
-# Конфігурація git (для merge операцій)
-git config user.email "whiteclaw@vm"
-git config user.name "WhiteClaw"
-
-# Збірка
-npm install && npm run build
-```
-
-### 5. Додати Discord канал
-```bash
-cd /root/nanoclaw
-
-# Merge Discord-коду
-git remote add discord https://github.com/qwibitai/nanoclaw-discord.git
-git fetch discord main
-git merge discord/main --no-edit
-npm install && npm run build
-```
-
-### 6. OAuth-токен Claude
-
-Запустити **на VM** інтерактивно:
-```bash
-claude setup-token
-```
-Відкрити URL у браузері → авторизуватись → вставити код у термінал.
-
-### 7. Створити .env
-```bash
-cat > /root/nanoclaw/.env << 'EOF'
-CLAUDE_CODE_OAUTH_TOKEN=<токен з claude setup-token>
-DISCORD_BOT_TOKEN=<токен з Discord Developer Portal>
-ASSISTANT_NAME=WhiteClaw
-ASSISTANT_HAS_OWN_NUMBER=true
-TZ=Europe/Kyiv
-MAX_CONCURRENT_CONTAINERS=2
-EOF
-
-mkdir -p data/env && cp .env data/env/env
-```
-
-### 8. Скопіювати конфіги агента
-```bash
-# З Windows:
-scp config/agent-claude.md whiteclaw:/root/.config/nanoclaw/agent-claude.md
-scp config/global-claude.md whiteclaw:/root/.config/nanoclaw/global-claude.md
-scp config/mount-allowlist.json whiteclaw:/root/.config/nanoclaw/mount-allowlist.json
-```
-
-### 9. Збудувати Docker-образ
-```bash
-ssh whiteclaw "cd /root/nanoclaw/container && bash build.sh"
-```
-
-### 10. Підготувати session data
-
-NanoClaw монтує session-директорію в контейнер як `/home/node/.claude` та `/app/src`.
-Контейнер працює під uid 1000 (node), тому потрібні правильні permissions:
+### Automated Setup (via SSH)
 
 ```bash
-# Створити директорії для кожного зареєстрованого каналу
-GROUP_FOLDER="discord_main"
-mkdir -p /root/nanoclaw/data/sessions/${GROUP_FOLDER}/.claude/debug
-mkdir -p /root/nanoclaw/data/sessions/${GROUP_FOLDER}/agent-runner-src
-
-# Скопіювати вихідники agent-runner (контейнер монтує /app/src з хоста)
-cp -r /root/nanoclaw/container/agent-runner/src/* \
-      /root/nanoclaw/data/sessions/${GROUP_FOLDER}/agent-runner-src/
-
-# Встановити правильного власника (uid 1000 = node user в контейнері)
-chown -R 1000:1000 /root/nanoclaw/data/sessions/${GROUP_FOLDER}
+scp infra/setup-mac.sh whiteclaw:/tmp/
+ssh whiteclaw "sed -i '' 's/\r$//' /tmp/setup-mac.sh && bash /tmp/setup-mac.sh"
 ```
 
-### 11. Зареєструвати Discord-канал
-```bash
-cd /root/nanoclaw && node -e "
-const db = require('./dist/db.js');
-db.initDatabase();
-db.setRegisteredGroup('dc:<CHANNEL_ID>', {
-  name: 'WhiteClaw Main',
-  folder: 'discord_main',
-  trigger: '@WhiteClaw',
-  added_at: new Date().toISOString(),
-  requiresTrigger: false,
-  isMain: true
-});
-console.log(JSON.stringify(db.getAllRegisteredGroups(), null, 2));
-"
-```
+The script automatically:
+- Configures energy settings
+- Installs Node.js 22, Syncthing, Claude Code CLI
+- Creates directories (~/relay, ~/shared, ~/projects)
+- Sets up launchd service for Relay
 
-### 12. Створити та запустити systemd сервіс
-```bash
-cp /path/to/infra/nanoclaw.service /etc/systemd/system/nanoclaw.service
-systemctl daemon-reload
-systemctl enable nanoclaw
-systemctl start nanoclaw
-```
+### After setup-mac.sh
 
-### 13. Перевірити
-```bash
-tail -f /root/nanoclaw/logs/nanoclaw.log
-```
-Надіслати повідомлення в Discord → бот має відповісти.
+1. `ssh whiteclaw "claude setup-token"` -> open URL in browser -> authorize -> paste code
+2. Fill in Discord bot token: `ssh whiteclaw "nano ~/relay/.env"`
+3. Deploy Relay source: `bash scripts/deploy.sh`
+4. Pair Syncthing: `ssh -L 8384:localhost:8384 whiteclaw` -> http://localhost:8384
+5. Test: `bash scripts/status.sh` -> send message in Discord
+6. Reboot test: `ssh whiteclaw "sudo shutdown -r now"` -> wait 3 min -> `bash scripts/status.sh`
 
 ## Discord Bot Setup
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) → New Application
+1. [Discord Developer Portal](https://discord.com/developers/applications) -> New Application
 2. **Bot** tab:
-   - Reset Token → зберегти `DISCORD_BOT_TOKEN`
+   - Reset Token -> save as `DISCORD_BOT_TOKEN`
    - Privileged Gateway Intents:
-     - **Message Content Intent** — обов'язково!
+     - **Message Content Intent** — required!
      - **Server Members Intent**
-3. **OAuth2** → URL Generator:
-   - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Read Message History`, `View Channels`
-   - Відкрити URL → додати на сервер
-4. У Discord: User Settings → Advanced → Developer Mode → ПКМ на канал → Copy Channel ID
+3. **OAuth2** -> URL Generator:
+   - Scopes: `bot`, `applications.commands`
+   - Bot Permissions: `Send Messages`, `Read Message History`, `View Channels`, `Add Reactions`
+   - Open URL -> add to server
+4. Register projects: use `/project add` slash command in Discord
 
 ## Daily Operations
 
@@ -198,111 +97,81 @@ bash scripts/logs.sh        # main logs
 bash scripts/logs.sh error   # error logs only
 ```
 
-### Restart NanoClaw
+### Restart Relay
 ```bash
 bash scripts/restart.sh
 ```
 
-## Troubleshooting
-
-### SSH connection timeout
-ISP блокує порт 22. VM слухає SSH на двох портах:
-- Порт 22 (стандартний)
-- Порт 443 (fallback, рекомендований)
-
-Якщо обидва не працюють — використати [DigitalOcean Console](https://cloud.digitalocean.com/droplets).
-
-**НІКОЛИ** не вбивати sshd вручну (`kill $(pgrep sshd)`). Використовувати тільки `systemctl restart ssh.socket`.
-
-### Agent not responding
-1. Check service: `ssh whiteclaw "systemctl status nanoclaw"`
-2. Check logs: `bash scripts/logs.sh error`
-3. Check containers: `ssh whiteclaw "docker ps"`
-4. Restart: `bash scripts/restart.sh`
-
-### Container exited with code 1 — "Claude Code process exited with code 1"
-- OAuth-токен протухнув → `claude setup-token` на VM, оновити `.env`, `cp .env data/env/env`, `systemctl restart nanoclaw`
-- Стара сесія зламана → `sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='discord_main';"` + видалити `/root/nanoclaw/data/sessions/discord_main`, створити заново (крок 10)
-
-### Container exited with code 2 — "TS18003: No inputs were found"
-`/app/src` монтується з хоста і порожня. Виправити:
-```bash
-cp -r /root/nanoclaw/container/agent-runner/src/* \
-      /root/nanoclaw/data/sessions/discord_main/agent-runner-src/
-chown -R 1000:1000 /root/nanoclaw/data/sessions/discord_main/agent-runner-src/
-```
-
-### Bot typing but not responding (IPC permissions)
-NanoClaw під root створює IPC-файли, контейнер під node (uid 1000) не може їх прочитати.
-Systemd сервіс має мати `UMask=0000`. Перевірити: `grep UMask /etc/systemd/system/nanoclaw.service`.
-
-### Bot connected but no messages received
-**Message Content Intent** не увімкнений на Discord Developer Portal.
-Bot tab → Privileged Gateway Intents → Message Content Intent → Save.
-Може знадобитися перезапросити бота на сервер.
-
-### Container OOM / slow
-1. Check running containers: `ssh whiteclaw "docker ps"`
-2. Check memory: `ssh whiteclaw "free -h"`
-3. Kill stuck containers: `ssh whiteclaw "docker kill \$(docker ps -q)"`
-4. Reduce concurrency: edit `/root/nanoclaw/.env` → `MAX_CONCURRENT_CONTAINERS=1`
-
-### Syncthing not syncing
-1. Check service: `ssh whiteclaw "systemctl status syncthing@root"`
-2. Check GUI via tunnel: `ssh -L 8384:localhost:8384 whiteclaw` → open `http://localhost:8384`
-3. Verify device is connected in Syncthing GUI
-4. Check firewall: ports 22000 (TCP/UDP) and 21027 (UDP)
-
-### OAuth token expired
-1. SSH into VM: `ssh whiteclaw`
-2. `claude setup-token` (відкрити URL в браузері, авторизуватись, вставити код)
-3. Скопіювати токен в `/root/nanoclaw/.env`
-4. `cp .env data/env/env && systemctl restart nanoclaw`
-
-## Maintenance
-
-### Update NanoClaw
+### Deploy update
 ```bash
 bash scripts/deploy.sh
 ```
 
-### Create backup snapshot
+### Register a new project
+In Discord: `/project add <name> <path> <channel>`
+
+Example: `/project add zbroya /Users/i.beliy/projects/zbroya.science #zbroya-science`
+
+## Troubleshooting
+
+### Relay not responding
+
+1. Check service: `bash scripts/status.sh`
+2. Check logs: `bash scripts/logs.sh error`
+3. Restart: `bash scripts/restart.sh`
+
+### Claude CLI errors
+
+1. OAuth token expired: `ssh whiteclaw "claude setup-token"`
+2. After re-auth, restart Relay: `bash scripts/restart.sh`
+
+### Session stuck in "running" state
+
+Relay automatically resets stuck sessions on startup. To force:
 ```bash
-bash scripts/snapshot.sh
+bash scripts/restart.sh
 ```
 
-### Update VM packages
+Or manually: `ssh whiteclaw "sqlite3 ~/relay/relay.db \"UPDATE sessions SET status='idle' WHERE status='running'\"""`
+
+### Bot connected but no messages received
+
+**Message Content Intent** not enabled on Discord Developer Portal.
+Bot tab -> Privileged Gateway Intents -> Message Content Intent -> Save.
+
+### Mac Mini not reachable
+
+1. Check Tailscale: `tailscale status` (from Windows)
+2. Ping: `tailscale ping <mac-ip>`
+3. If Mac not visible — physically check it's powered on and connected to network
+
+### Mac Mini: Relay not starting after reboot
+
+1. `ssh whiteclaw "launchctl print gui/\$(id -u)/com.whiteclaw.relay"`
+2. Logs: `ssh whiteclaw "tail -20 ~/relay/logs/relay.error.log"`
+3. Manual start: `ssh whiteclaw "cd ~/relay && node dist/index.js"`
+
+## Maintenance
+
+### Update Relay
 ```bash
-ssh whiteclaw "apt update && DEBIAN_FRONTEND=noninteractive apt upgrade -y"
+bash scripts/deploy.sh
 ```
 
-### Rebuild Docker image (after NanoClaw update)
+### Update Claude Code CLI
 ```bash
-ssh whiteclaw "cd /root/nanoclaw/container && bash build.sh"
+ssh whiteclaw "npm install -g @anthropic-ai/claude-code"
+bash scripts/restart.sh
 ```
 
-### Lock down Syncthing GUI (after pairing)
+### Backup database
 ```bash
-ssh whiteclaw "sed -i 's|0.0.0.0:8384|127.0.0.1:8384|' /root/.config/syncthing/config.xml && systemctl restart syncthing@root"
+ssh whiteclaw "cp ~/relay/relay.db ~/relay/relay.db.bak"
 ```
-Access via SSH tunnel: `ssh -L 8384:localhost:8384 whiteclaw`
 
 ## SSH Tunnel Cheat Sheet
 
 ```bash
 # Syncthing GUI
 ssh -L 8384:localhost:8384 whiteclaw
-
-# Interactive session with tmux
-ssh whiteclaw -t "tmux attach || tmux new"
 ```
-
-## Відомі проблеми та рішення (lessons learned)
-
-1. **ISP блокує порт 22** — SSH завжди через порт 443. Скрипти та конфіги мають це враховувати.
-2. **ufw конфліктує з DO Firewall** — ufw вимкнений, файрвол тільки через DigitalOcean.
-3. **CRLF на Windows** — `.gitattributes` з `*.sh text eol=lf`. При копіюванні скриптів на VM: `sed -i 's/\r$//' script.sh`.
-4. **Cloud-init ненадійний** — SSH на порт 443 краще налаштовувати вручну через DO Console перед першим SSH-підключенням.
-5. **Контейнер під uid 1000** — всі монтовані директорії мають `chown 1000:1000`, systemd сервіс з `UMask=0000`.
-6. **agent-runner-src** — контейнер монтує `/app/src` з хоста для hot-reload. Директорія має містити копію `container/agent-runner/src/*`.
-7. **GitHub через HTTPS** — ISP блокує порт 22 для git@github.com. Remote: `https://github.com/...`.

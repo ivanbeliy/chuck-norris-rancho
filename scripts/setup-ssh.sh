@@ -1,45 +1,73 @@
 #!/bin/bash
-# Створити SSH-ключ та налаштувати конфіг для VM
-# Запускати: bash scripts/setup-ssh.sh <DROPLET_IP>
+# Налаштувати SSH-конфіг для підключення до WhiteClaw
+# Використання:
+#   DO VM:   bash scripts/setup-ssh.sh do <DROPLET_IP>
+#   Mac:     bash scripts/setup-ssh.sh mac <TAILSCALE_IP>
 set -euo pipefail
 
-DROPLET_IP="${1:-}"
+TARGET="${1:-}"
+HOST_IP="${2:-}"
 
-if [ -z "$DROPLET_IP" ]; then
-  echo "Usage: bash scripts/setup-ssh.sh <DROPLET_IP>"
+if [ -z "$TARGET" ] || [ -z "$HOST_IP" ]; then
+  echo "Usage:"
+  echo "  bash scripts/setup-ssh.sh do  <DROPLET_IP>    # DigitalOcean VM"
+  echo "  bash scripts/setup-ssh.sh mac <TAILSCALE_IP>   # Mac Mini (Tailscale)"
   exit 1
 fi
 
-KEY_FILE="$HOME/.ssh/whiteclaw_ed25519"
-
-# Створити SSH-ключ якщо не існує
-if [ ! -f "$KEY_FILE" ]; then
-  echo "=== Generating SSH key ==="
-  ssh-keygen -t ed25519 -C "whiteclaw-vm" -f "$KEY_FILE" -N ""
-  echo ""
-  echo "Public key (add to DigitalOcean → Settings → Security → SSH Keys):"
-  cat "${KEY_FILE}.pub"
-  echo ""
-fi
-
-# Додати конфіг
 SSH_CONFIG="$HOME/.ssh/config"
-if grep -q "Host whiteclaw" "$SSH_CONFIG" 2>/dev/null; then
-  echo "SSH config entry 'whiteclaw' already exists. Updating..."
-  # Видалити старий запис (до наступного Host або кінця файлу)
-  sed -i '/^Host whiteclaw$/,/^Host /{ /^Host whiteclaw$/d; /^Host /!d; }' "$SSH_CONFIG"
+mkdir -p "$HOME/.ssh"
+touch "$SSH_CONFIG"
+
+# Видалити старий запис whiteclaw
+if grep -q "^Host whiteclaw$" "$SSH_CONFIG" 2>/dev/null; then
+  echo "Видаляю старий запис 'whiteclaw'..."
+  # Видалити блок від "Host whiteclaw" до наступного "Host " або кінця файлу
+  awk '/^Host whiteclaw$/{skip=1; next} /^Host /{skip=0} !skip' "$SSH_CONFIG" > "$SSH_CONFIG.tmp"
+  mv "$SSH_CONFIG.tmp" "$SSH_CONFIG"
 fi
 
-cat >> "$SSH_CONFIG" << EOF
+case "$TARGET" in
+  do)
+    KEY_FILE="$HOME/.ssh/whiteclaw_ed25519"
+    if [ ! -f "$KEY_FILE" ]; then
+      echo "=== Generating SSH key ==="
+      ssh-keygen -t ed25519 -C "whiteclaw-vm" -f "$KEY_FILE" -N ""
+      echo ""
+      echo "Public key (add to DigitalOcean → Settings → Security → SSH Keys):"
+      cat "${KEY_FILE}.pub"
+      echo ""
+    fi
+
+    cat >> "$SSH_CONFIG" << EOF
 
 Host whiteclaw
-    HostName $DROPLET_IP
+    HostName $HOST_IP
     Port 443
     User root
     IdentityFile $KEY_FILE
     ServerAliveInterval 60
     ServerAliveCountMax 3
 EOF
+    echo "=== SSH config: whiteclaw → DO VM ($HOST_IP:443) ==="
+    ;;
 
-echo "=== SSH config updated ==="
+  mac)
+    cat >> "$SSH_CONFIG" << EOF
+
+Host whiteclaw
+    HostName $HOST_IP
+    User i.beliy
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+EOF
+    echo "=== SSH config: whiteclaw → Mac Mini ($HOST_IP via Tailscale) ==="
+    ;;
+
+  *)
+    echo "ERROR: Unknown target '$TARGET'. Use 'do' or 'mac'."
+    exit 1
+    ;;
+esac
+
 echo "Test: ssh whiteclaw"

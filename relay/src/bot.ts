@@ -1,0 +1,248 @@
+import {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  ChatInputCommandInteraction,
+  ChannelType,
+} from 'discord.js';
+import * as db from './db.js';
+import * as router from './router.js';
+
+let client: Client;
+
+export async function start(token: string): Promise<void> {
+  client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
+
+  client.on('ready', async () => {
+    console.log(
+      `[${new Date().toISOString()}] Relay online as ${client.user!.tag}`,
+    );
+    await registerSlashCommands(token);
+  });
+
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    if (!message.content.trim()) return;
+
+    // Only respond in registered channels
+    const project = db.getProjectByChannelId(message.channel.id);
+    if (!project) return;
+
+    try {
+      await router.handleMessage(message);
+    } catch (err) {
+      console.error(
+        `[${new Date().toISOString()}] Error handling message:`,
+        err,
+      );
+      await message
+        .reply('Internal error. Check relay logs.')
+        .catch(() => {});
+    }
+  });
+
+  client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    try {
+      await handleCommand(interaction);
+    } catch (err) {
+      console.error(
+        `[${new Date().toISOString()}] Error handling command:`,
+        err,
+      );
+      const reply = interaction.replied || interaction.deferred
+        ? interaction.followUp.bind(interaction)
+        : interaction.reply.bind(interaction);
+      await reply({ content: 'Command failed. Check relay logs.', ephemeral: true }).catch(() => {});
+    }
+  });
+
+  client.on('error', (err) => {
+    console.error(`[${new Date().toISOString()}] Discord client error:`, err);
+  });
+
+  await client.login(token);
+}
+
+export async function destroy(): Promise<void> {
+  if (client) {
+    client.destroy();
+  }
+}
+
+// --- Slash Commands ---
+
+async function registerSlashCommands(token: string): Promise<void> {
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('project')
+      .setDescription('Manage projects')
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Register a project')
+          .addStringOption((o) =>
+            o.setName('name').setDescription('Project name').setRequired(true),
+          )
+          .addStringOption((o) =>
+            o
+              .setName('path')
+              .setDescription('Absolute path on Mac')
+              .setRequired(true),
+          )
+          .addChannelOption((o) =>
+            o
+              .setName('channel')
+              .setDescription('Discord channel')
+              .setRequired(true),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub.setName('list').setDescription('List all projects'),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove a project')
+          .addStringOption((o) =>
+            o
+              .setName('name')
+              .setDescription('Project name')
+              .setRequired(true),
+          ),
+      ),
+    new SlashCommandBuilder()
+      .setName('status')
+      .setDescription('Show session status for all projects'),
+  ];
+
+  const rest = new REST({ version: '10' }).setToken(token);
+  await rest.put(Routes.applicationCommands(client.user!.id), {
+    body: commands.map((c) => c.toJSON()),
+  });
+  console.log(`[${new Date().toISOString()}] Slash commands registered`);
+}
+
+async function handleCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const { commandName } = interaction;
+
+  if (commandName === 'status') {
+    return handleStatus(interaction);
+  }
+
+  if (commandName === 'project') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'add') return handleProjectAdd(interaction);
+    if (sub === 'list') return handleProjectList(interaction);
+    if (sub === 'remove') return handleProjectRemove(interaction);
+  }
+}
+
+async function handleProjectAdd(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const name = interaction.options.getString('name', true);
+  const path = interaction.options.getString('path', true);
+  const channel = interaction.options.getChannel('channel', true);
+
+  if (channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      content: 'Channel must be a text channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Check for duplicates
+  if (db.getProjectByName(name)) {
+    await interaction.reply({
+      content: `Project "${name}" already exists.`,
+      ephemeral: true,
+    });
+    return;
+  }
+  if (db.getProjectByChannelId(channel.id)) {
+    await interaction.reply({
+      content: `Channel <#${channel.id}> is already mapped to a project.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const project = db.createProject(channel.id, path, name);
+  await interaction.reply(
+    `Project **${project.name}** registered.\nChannel: <#${project.discord_channel_id}>\nPath: \`${project.project_path}\``,
+  );
+}
+
+async function handleProjectList(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const projects = db.getAllProjects();
+  if (projects.length === 0) {
+    await interaction.reply({
+      content: 'No projects registered. Use `/project add` to register one.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const lines = projects.map(
+    (p) => `**${p.name}** — <#${p.discord_channel_id}> — \`${p.project_path}\``,
+  );
+  await interaction.reply(lines.join('\n'));
+}
+
+async function handleProjectRemove(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const name = interaction.options.getString('name', true);
+  const deleted = db.deleteProject(name);
+  if (deleted) {
+    await interaction.reply(`Project **${name}** removed.`);
+  } else {
+    await interaction.reply({
+      content: `Project "${name}" not found.`,
+      ephemeral: true,
+    });
+  }
+}
+
+async function handleStatus(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const sessions = db.getAllSessions();
+  if (sessions.length === 0) {
+    await interaction.reply({
+      content: 'No active sessions.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const statusEmoji: Record<string, string> = {
+    idle: '\u{1F7E2}',     // green circle
+    running: '\u{1F7E1}',  // yellow circle
+    error: '\u{1F534}',    // red circle
+  };
+
+  const lines = sessions.map((s) => {
+    const emoji = statusEmoji[s.status] || '\u26AA';
+    const active = s.last_active
+      ? ` (last: ${s.last_active})`
+      : '';
+    return `${emoji} **${s.project_name}** — ${s.status}${active}`;
+  });
+
+  await interaction.reply(lines.join('\n'));
+}

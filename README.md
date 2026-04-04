@@ -1,46 +1,59 @@
 # WhiteClaw
 
-Personal AI agent orchestrator powered by [NanoClaw](https://github.com/qwibitai/nanoclaw), deployed on DigitalOcean, controlled via WhatsApp.
+Personal AI agent infrastructure powered by **Relay** — a thin Discord-to-Claude-Code transport layer running on Mac Mini M1, controlled via Discord.
 
 ## Architecture
 
 ```
-Windows Workstation                    DigitalOcean VM (Ubuntu 24.04)
-+------------------+                   +----------------------------------+
-| WhiteClaw repo   |   SSH/doctl       | NanoClaw (Node.js)               |
-| scripts/         | ───────────────── | ├── WhatsApp channel (Baileys)   |
-| config/          |                   | ├── SQLite (messages/tasks)      |
-|                  |                   | ├── Docker containers            |
-| shared/          |   Syncthing       | │   └── Claude Agent SDK         |
-| ├── inbox/       | ◄═══════════════► | └── systemd service              |
-| ├── outbox/      |   (port 22000)    |                                  |
-| └── projects/    |                   | /root/shared/ (synced)           |
-+------------------+                   +----------------------------------+
+Discord (phone/desktop)              Mac Mini M1 (via Tailscale VPN)
++------------------+                 +----------------------------------+
+| User messages in |  Discord API    | Relay (Node.js, discord.js)      |
+| project channels | <============> | -> child_process.spawn('claude') |
+|                  |                 | -> parse JSON output             |
+| WhiteClaw repo   |  SSH (Tailscale)| -> reply to Discord              |
+| scripts/         | --------------> |                                  |
+| relay/           |                 | ~/relay/ (Relay bot)             |
+|                  |  Syncthing      | ~/projects/ (dev projects)       |
+| shared/          | <============> | ~/shared/ (synced files)         |
++------------------+                 +----------------------------------+
 ```
+
+Relay is a dumb pipe. All intelligence lives inside native Claude Code CLI sessions, driven by per-project `CLAUDE.md` files.
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env` and fill in values
-2. Run `bash infra/provision-droplet.sh` to create the VM
-3. Run `ssh whiteclaw < infra/setup-vm.sh` to configure the VM
-4. SSH into VM, clone NanoClaw, run `/setup`
-5. Pair Syncthing between Windows and VM
-6. Send a WhatsApp message to test
+1. Prepare Mac: enable SSH, auto-login, energy settings, install Homebrew & Tailscale (see RUNBOOK)
+2. From Windows: `bash scripts/setup-ssh.sh mac <TAILSCALE_IP>`
+3. Deploy: `scp infra/setup-mac.sh whiteclaw:/tmp/ && ssh whiteclaw 'bash /tmp/setup-mac.sh'`
+4. Configure: `ssh whiteclaw "claude setup-token"` + fill `DISCORD_BOT_TOKEN` in `~/relay/.env`
+5. Deploy Relay: `bash scripts/deploy.sh`
+6. Test: `bash scripts/status.sh` + send Discord message
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `infra/provision-droplet.sh` | Create DigitalOcean droplet |
-| `infra/firewall.sh` | Configure firewall rules |
-| `infra/setup-vm.sh` | Install all VM dependencies |
-| `scripts/deploy.sh` | Redeploy NanoClaw |
-| `scripts/logs.sh` | Tail NanoClaw logs |
-| `scripts/restart.sh` | Restart NanoClaw service |
+| `infra/setup-mac.sh` | Full Mac Mini setup (Node.js, Claude CLI, Relay, launchd) |
+| `scripts/deploy.sh` | Deploy Relay to Mac Mini |
+| `scripts/logs.sh` | Tail Relay logs (`error` option) |
+| `scripts/restart.sh` | Restart Relay service |
 | `scripts/status.sh` | Full system status |
+| `scripts/setup-ssh.sh` | Configure SSH (`mac` target) |
+
+## Discord Commands
+
+| Command | Description |
+|---------|-------------|
+| `/project add <name> <path> <channel>` | Register a project |
+| `/project list` | List all projects |
+| `/project remove <name>` | Unregister a project |
+| `/status` | Show session status |
 
 ## File Exchange
 
 - `shared/inbox/` — put files here for the agent to process
 - `shared/outbox/` — agent puts completed files here
-- `shared/projects/` — shared project directories
+
+## Detailed docs
+
+See [docs/RUNBOOK.md](docs/RUNBOOK.md) for full deployment guide and troubleshooting.

@@ -1,5 +1,8 @@
-# Force LF line endings for shell scripts (critical for Linux VM execution)
+# Force LF line endings for shell scripts (critical for Linux VM and macOS execution)
 *.sh text eol=lf
+
+# Force LF for launchd plists (macOS)
+*.plist text eol=lf
 
 # Keep other text files with auto-detection
 *.md text
