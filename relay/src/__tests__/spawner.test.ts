@@ -1,0 +1,239 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
+
+// Mock child_process before importing spawner
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
+}));
+
+import { spawn as cpSpawn } from 'child_process';
+import { spawnClaude, isRunning, killByProject } from '../spawner.js';
+
+function createFakeChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    killed: boolean;
+    kill: ReturnType<typeof vi.fn>;
+    pid: number;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.killed = false;
+  child.kill = vi.fn((signal?: string) => {
+    child.killed = true;
+    return true;
+  });
+  child.pid = 12345;
+  return child;
+}
+
+function mockSpawn(child: ReturnType<typeof createFakeChild>) {
+  (cpSpawn as unknown as ReturnType<typeof vi.fn>).mockReturnValue(child);
+}
+
+describe('spawnClaude', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('builds correct args with minimal options', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    expect(cpSpawn).toHaveBeenCalledWith(
+      'claude',
+      ['-p', 'hello', '--output-format', 'json'],
+      expect.objectContaining({ cwd: '/tmp/proj' }),
+    );
+
+    // Emit valid JSON and close
+    child.stdout.end(JSON.stringify({ result: 'ok', session_id: 's1' }));
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+  });
+
+  it('adds --resume when claudeSessionId provided', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: 'session-abc',
+      skipPermissions: false,
+    });
+
+    expect(cpSpawn).toHaveBeenCalledWith(
+      'claude',
+      ['-p', 'hello', '--output-format', 'json', '--resume', 'session-abc'],
+      expect.anything(),
+    );
+
+    child.stdout.end(JSON.stringify({ result: 'ok', session_id: 'session-abc' }));
+    child.emit('close', 0);
+    await promise;
+  });
+
+  it('adds --dangerously-skip-permissions when skipPermissions is true', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: true,
+    });
+
+    const args = (cpSpawn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(args).toContain('--dangerously-skip-permissions');
+
+    child.stdout.end(JSON.stringify({ result: 'ok' }));
+    child.emit('close', 0);
+    await promise;
+  });
+
+  it('parses valid JSON on exit code 0', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    const json = {
+      result: 'Files modified',
+      session_id: 'sess-1',
+      total_cost_usd: 0.05,
+    };
+    child.stdout.end(JSON.stringify(json));
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    expect(result.result).toBe('Files modified');
+    expect(result.claudeSessionId).toBe('sess-1');
+    expect(result.costUsd).toBe('0.05');
+  });
+
+  it('returns raw stdout on invalid JSON with exit code 0', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    child.stdout.end('not json');
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    expect(result.result).toBe('not json');
+  });
+
+  it('returns error on non-zero exit code', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    child.stderr.end('something went wrong');
+    child.emit('close', 1);
+
+    const result = await promise;
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('code 1');
+    expect(result.error).toContain('something went wrong');
+  });
+
+  it('returns error on spawn error event', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    child.emit('error', new Error('ENOENT'));
+
+    const result = await promise;
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Failed to spawn claude');
+    expect(result.error).toContain('ENOENT');
+  });
+});
+
+describe('isRunning / killByProject', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('isRunning returns true while process is active', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/active',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    expect(isRunning('/tmp/active')).toBe(true);
+
+    child.stdout.end('{}');
+    child.emit('close', 0);
+    await promise;
+
+    expect(isRunning('/tmp/active')).toBe(false);
+  });
+
+  it('killByProject sends SIGTERM and returns true', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/killme',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    expect(killByProject('/tmp/killme')).toBe(true);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+
+    child.stdout.end('');
+    child.emit('close', 1);
+    await promise;
+  });
+
+  it('killByProject returns false when no process exists', () => {
+    expect(killByProject('/tmp/nonexistent')).toBe(false);
+  });
+});
