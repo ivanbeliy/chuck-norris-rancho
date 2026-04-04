@@ -10,6 +10,13 @@ import * as fmt from './discord-format.js';
 
 const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25 MB
 
+// Message buffer: while a project is busy, incoming messages accumulate here
+const messageBuffer = new Map<string, Message[]>();
+
+export function getBufferedCount(projectPath: string): number {
+  return messageBuffer.get(projectPath)?.length ?? 0;
+}
+
 interface SavedAttachment {
   name: string;
   filePath: string;
@@ -73,9 +80,9 @@ export async function downloadAttachments(
 }
 
 /**
- * Build the prompt including context from replied-to or forwarded messages and attachments.
+ * Build prompt for a single message including reply context, forwards, and attachments.
  */
-async function buildPrompt(
+export async function buildPrompt(
   message: Message,
   savedAttachments: SavedAttachment[] = [],
 ): Promise<string> {
@@ -136,22 +143,53 @@ async function buildPrompt(
   return parts.join('\n');
 }
 
+/**
+ * Build a combined prompt from multiple buffered messages.
+ */
+async function buildBatchPrompt(
+  messages: Message[],
+  projectPath: string,
+): Promise<string> {
+  const parts: string[] = [];
+
+  parts.push(
+    `[While you were busy, the user sent ${messages.length} more message${messages.length > 1 ? 's' : ''}. Process them all.]`,
+  );
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const savedAtts = await downloadAttachments(msg.attachments, projectPath);
+    const msgPrompt = await buildPrompt(msg, savedAtts);
+    parts.push(
+      messages.length > 1
+        ? `[Message ${i + 1}/${messages.length}]\n${msgPrompt}`
+        : msgPrompt,
+    );
+  }
+
+  return parts.join('\n\n');
+}
+
+// ── Entry point ──────────────────────────────────────────────
+
 export async function handleMessage(message: Message): Promise<void> {
   const project = db.getProjectByChannelId(message.channel.id);
   if (!project) return;
 
   if (spawner.isRunning(project.project_path)) {
-    await message.reply(
-      'A task is already running for this project. Please wait for it to finish.',
-    );
+    // Buffer the message — it will be processed after the current task
+    const buf = messageBuffer.get(project.project_path) || [];
+    buf.push(message);
+    messageBuffer.set(project.project_path, buf);
+    await message.react('\uD83D\uDCCB').catch(() => {}); // 📋 queued
     return;
   }
 
+  // Process immediately
   const session = db.getOrCreateSession(project.id);
   db.updateSessionStatus(session.id, 'running');
 
-  // Acknowledge receipt
-  await message.react('\u23F3').catch(() => {}); // hourglass
+  await message.react('\u23F3').catch(() => {}); // ⏳ hourglass
   if ('sendTyping' in message.channel) {
     await message.channel.sendTyping().catch(() => {});
   }
@@ -162,6 +200,51 @@ export async function handleMessage(message: Message): Promise<void> {
   );
   const prompt = await buildPrompt(message, savedAttachments);
 
+  const result = await runWithRetry(prompt, project, session);
+  await finalize(message, session, result);
+
+  // Drain any messages that arrived while we were busy
+  await drainBuffer(project);
+}
+
+// ── Drain buffered messages ──────────────────────────────────
+
+async function drainBuffer(project: db.Project): Promise<void> {
+  const buffered = messageBuffer.get(project.project_path);
+  if (!buffered || buffered.length === 0) return;
+
+  // Take all buffered messages at once
+  messageBuffer.delete(project.project_path);
+
+  console.log(
+    `[${new Date().toISOString()}] Draining ${buffered.length} buffered message(s) for ${project.name}`,
+  );
+
+  const lastMessage = buffered[buffered.length - 1];
+  const session = db.getOrCreateSession(project.id);
+  db.updateSessionStatus(session.id, 'running');
+
+  // Hourglass on the last message
+  await lastMessage.react('\u23F3').catch(() => {});
+  if ('sendTyping' in lastMessage.channel) {
+    await lastMessage.channel.sendTyping().catch(() => {});
+  }
+
+  const prompt = await buildBatchPrompt(buffered, project.project_path);
+  const result = await runWithRetry(prompt, project, session);
+  await finalizeBatch(buffered, session, result);
+
+  // Recurse: more messages may have arrived during this batch
+  await drainBuffer(project);
+}
+
+// ── Spawn with session-error retry ───────────────────────────
+
+async function runWithRetry(
+  prompt: string,
+  project: db.Project,
+  session: db.Session,
+): Promise<spawner.SpawnResult> {
   const result = await spawner.spawnClaude({
     prompt,
     projectPath: project.project_path,
@@ -169,7 +252,6 @@ export async function handleMessage(message: Message): Promise<void> {
     skipPermissions: project.skip_permissions,
   });
 
-  // If session-related error, clear session ID and retry once
   if (
     !result.success &&
     result.error &&
@@ -180,34 +262,26 @@ export async function handleMessage(message: Message): Promise<void> {
     );
     db.updateSessionClaudeId(session.id, null);
 
-    const retry = await spawner.spawnClaude({
+    return spawner.spawnClaude({
       prompt,
       projectPath: project.project_path,
       claudeSessionId: null,
       skipPermissions: project.skip_permissions,
     });
-
-    return finalize(message, session, retry);
   }
 
-  return finalize(message, session, result);
+  return result;
 }
+
+// ── Finalize: single message ─────────────────────────────────
 
 async function finalize(
   message: Message,
   session: db.Session,
   result: spawner.SpawnResult,
 ): Promise<void> {
-  // Update session state
-  if (result.claudeSessionId) {
-    db.updateSessionClaudeId(session.id, result.claudeSessionId);
-  }
-  db.updateSessionStatus(
-    session.id,
-    result.success ? 'idle' : 'error',
-  );
+  updateSession(session, result);
 
-  // Send response
   if (result.success) {
     const formatted = fmt.formatResult(result.result, result.costUsd);
     const chunks = fmt.splitMessage(formatted);
@@ -220,7 +294,6 @@ async function finalize(
     );
   }
 
-  // Update reactions: remove hourglass, add result indicator
   await message.reactions.cache
     .get('\u23F3')
     ?.users.remove(message.client.user!.id)
@@ -228,4 +301,58 @@ async function finalize(
   await message
     .react(result.success ? '\u2705' : '\u274C')
     .catch(() => {});
+}
+
+// ── Finalize: batch of buffered messages ─────────────────────
+
+async function finalizeBatch(
+  messages: Message[],
+  session: db.Session,
+  result: spawner.SpawnResult,
+): Promise<void> {
+  updateSession(session, result);
+
+  const lastMessage = messages[messages.length - 1];
+
+  // Reply to the last message
+  if (result.success) {
+    const formatted = fmt.formatResult(result.result, result.costUsd);
+    const chunks = fmt.splitMessage(formatted);
+    for (const chunk of chunks) {
+      await lastMessage.reply(chunk);
+    }
+  } else {
+    await lastMessage.reply(
+      fmt.formatError(result.error || 'Unknown error'),
+    );
+  }
+
+  // Update reactions on all buffered messages: 📋 → ✅/❌
+  const emoji = result.success ? '\u2705' : '\u274C';
+  for (const msg of messages) {
+    await msg.reactions.cache
+      .get('\uD83D\uDCCB')
+      ?.users.remove(msg.client.user!.id)
+      .catch(() => {});
+    await msg.reactions.cache
+      .get('\u23F3')
+      ?.users.remove(msg.client.user!.id)
+      .catch(() => {});
+    await msg.react(emoji).catch(() => {});
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+function updateSession(
+  session: db.Session,
+  result: spawner.SpawnResult,
+): void {
+  if (result.claudeSessionId) {
+    db.updateSessionClaudeId(session.id, result.claudeSessionId);
+  }
+  db.updateSessionStatus(
+    session.id,
+    result.success ? 'idle' : 'error',
+  );
 }
