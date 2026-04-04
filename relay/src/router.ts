@@ -13,12 +13,18 @@ const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25 MB
 // Message buffer: while a project is busy, incoming messages accumulate here
 const messageBuffer = new Map<string, Message[]>();
 
+// Processing lock: prevents race conditions between finalize awaits and new messages.
+// Set synchronously BEFORE any awaits in handleMessage, cleared AFTER all
+// processing (including drain) completes. Checked alongside spawner.isRunning().
+const processing = new Set<string>();
+
 export function getBufferedCount(projectPath: string): number {
   return messageBuffer.get(projectPath)?.length ?? 0;
 }
 
 export function clearBuffers(): void {
   messageBuffer.clear();
+  processing.clear();
 }
 
 interface SavedAttachment {
@@ -180,47 +186,55 @@ export async function handleMessage(message: Message): Promise<void> {
   const project = db.getProjectByChannelId(message.channel.id);
   if (!project) return;
 
-  if (spawner.isRunning(project.project_path)) {
+  const pp = project.project_path;
+
+  if (processing.has(pp) || spawner.isRunning(pp)) {
     // Buffer the message — it will be processed after the current task
-    const buf = messageBuffer.get(project.project_path) || [];
+    const buf = messageBuffer.get(pp) || [];
     buf.push(message);
-    messageBuffer.set(project.project_path, buf);
+    messageBuffer.set(pp, buf);
     await message.react('\uD83D\uDCCB').catch(() => {}); // 📋 queued
     return;
   }
 
-  // Flush buffer: if messages accumulated while busy, combine with current
-  const buffered = messageBuffer.get(project.project_path);
-  if (buffered && buffered.length > 0) {
-    messageBuffer.delete(project.project_path);
-    buffered.push(message);
-    console.log(
-      `[${new Date().toISOString()}] Flushing ${buffered.length - 1} buffered + 1 new message for ${project.name}`,
+  // Acquire processing lock synchronously — before any awaits
+  processing.add(pp);
+  try {
+    // Flush buffer: if messages accumulated while busy, combine with current
+    const buffered = messageBuffer.get(pp);
+    if (buffered && buffered.length > 0) {
+      messageBuffer.delete(pp);
+      buffered.push(message);
+      console.log(
+        `[${new Date().toISOString()}] Flushing ${buffered.length - 1} buffered + 1 new message for ${project.name}`,
+      );
+      await processBatch(buffered, project);
+      return;
+    }
+
+    // Process single message
+    const session = db.getOrCreateSession(project.id);
+    db.updateSessionStatus(session.id, 'running');
+
+    await message.react('\u23F3').catch(() => {}); // ⏳ hourglass
+    if ('sendTyping' in message.channel) {
+      await message.channel.sendTyping().catch(() => {});
+    }
+
+    const savedAttachments = await downloadAttachments(
+      message.attachments,
+      project.project_path,
     );
-    await processBatch(buffered, project);
-    return;
+    const prompt = await buildPrompt(message, savedAttachments);
+
+    const result = await runWithRetry(prompt, project, session);
+    await finalize(message, session, result);
+
+    // Drain any messages that arrived while we were busy
+    await drainBuffer(project);
+  } finally {
+    processing.delete(pp);
   }
-
-  // Process single message
-  const session = db.getOrCreateSession(project.id);
-  db.updateSessionStatus(session.id, 'running');
-
-  await message.react('\u23F3').catch(() => {}); // ⏳ hourglass
-  if ('sendTyping' in message.channel) {
-    await message.channel.sendTyping().catch(() => {});
-  }
-
-  const savedAttachments = await downloadAttachments(
-    message.attachments,
-    project.project_path,
-  );
-  const prompt = await buildPrompt(message, savedAttachments);
-
-  const result = await runWithRetry(prompt, project, session);
-  await finalize(message, session, result);
-
-  // Drain any messages that arrived while we were busy
-  await drainBuffer(project);
 }
 
 // ── Process batch of messages ────────────────────────────────
