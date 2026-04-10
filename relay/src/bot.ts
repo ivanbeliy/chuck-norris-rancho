@@ -35,7 +35,8 @@ export async function start(token: string): Promise<void> {
     const hasReference = !!message.reference?.messageId;
     const hasForward = !!message.messageSnapshots?.size;
     const hasAttachments = !!message.attachments.size;
-    if (!hasContent && !hasReference && !hasForward && !hasAttachments) return;
+    const hasStickers = !!message.stickers.size;
+    if (!hasContent && !hasReference && !hasForward && !hasAttachments && !hasStickers) return;
 
     // Only respond in registered channels
     const project = db.getProjectByChannelId(message.channel.id);

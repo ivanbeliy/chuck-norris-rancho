@@ -1,4 +1,4 @@
-import { Message, Attachment } from 'discord.js';
+import { Message, Attachment, Embed, StickerFormatType } from 'discord.js';
 import { pipeline } from 'stream/promises';
 import { createWriteStream } from 'fs';
 import { mkdir } from 'fs/promises';
@@ -32,6 +32,18 @@ interface SavedAttachment {
   filePath: string;
   contentType: string | null;
   size: number;
+}
+
+interface StickerContext {
+  name: string;
+  description: string | null;
+  filePath: string | null;
+  format: string;
+}
+
+interface GifContext {
+  url: string;
+  description: string;
 }
 
 function getAuthorName(message: Message): string {
@@ -96,12 +108,113 @@ export async function downloadAttachments(
 }
 
 /**
+ * Download sticker images and extract metadata.
+ * Lottie stickers are text-only (JSON format, not viewable as image).
+ */
+export async function downloadStickers(
+  stickers: Message['stickers'],
+  projectPath: string,
+): Promise<StickerContext[]> {
+  if (!stickers?.size) return [];
+
+  const dir = path.join(projectPath, '.attachments');
+  await mkdir(dir, { recursive: true });
+
+  const results: StickerContext[] = [];
+
+  for (const [, sticker] of stickers) {
+    const formatName = StickerFormatType[sticker.format] || 'Unknown';
+    const isLottie = sticker.format === StickerFormatType.Lottie;
+
+    let filePath: string | null = null;
+
+    if (!isLottie) {
+      try {
+        const url = sticker.url;
+        const ext = sticker.format === StickerFormatType.GIF ? 'gif' : 'png';
+        const fileName = `${Date.now()}-sticker-${sticker.name}.${ext}`;
+        filePath = path.join(dir, fileName);
+
+        const response = await fetch(url);
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const readable = Readable.fromWeb(response.body as any);
+        await pipeline(readable, createWriteStream(filePath));
+      } catch (err) {
+        console.error(
+          `[${new Date().toISOString()}] Failed to download sticker ${sticker.name}:`,
+          err,
+        );
+        filePath = null;
+      }
+    }
+
+    results.push({
+      name: sticker.name,
+      description: sticker.description,
+      filePath,
+      format: formatName,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Extract descriptive context from GIF embeds (Tenor/Giphy via Discord GIF picker).
+ */
+export function extractGifContext(message: Message): GifContext[] {
+  const results: GifContext[] = [];
+
+  for (const embed of message.embeds) {
+    if (embed.data.type !== 'gifv') continue;
+
+    const url = embed.url || '';
+    const description = extractGifDescription(url, embed);
+
+    if (description) {
+      results.push({ url, description });
+    }
+  }
+
+  return results;
+}
+
+function extractGifDescription(url: string, embed: Embed): string {
+  // Try Tenor slug: /view/{slug}-{id}
+  const tenorMatch = url.match(/tenor\.com\/view\/([\w-]+?)(?:-\d+)?$/);
+  if (tenorMatch) {
+    return tenorMatch[1].replace(/-/g, ' ');
+  }
+
+  // Try Giphy slug: /gifs/{slug}-{id}
+  const giphyMatch = url.match(/giphy\.com\/gifs\/([\w-]+?)(?:-\w+)?$/);
+  if (giphyMatch) {
+    return giphyMatch[1].replace(/-/g, ' ');
+  }
+
+  // Fallback to embed metadata
+  if (embed.description) return embed.description;
+  if (embed.title) return embed.title;
+  if (embed.provider?.name) return `GIF from ${embed.provider.name}`;
+
+  return 'GIF';
+}
+
+function formatStickerText(sticker: { name: string; description?: string | null }): string {
+  return `[Sticker: "${sticker.name}"${sticker.description ? ` — ${sticker.description}` : ''}]`;
+}
+
+/**
  * Build prompt for a single message including reply context, forwards, and attachments.
  */
 export async function buildPrompt(
   message: Message,
   savedAttachments: SavedAttachment[] = [],
   includeAuthor: boolean = true,
+  stickerContexts: StickerContext[] = [],
+  gifContexts: GifContext[] = [],
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -124,6 +237,22 @@ export async function buildPrompt(
         }
       }
 
+      // Include sticker context from referenced message
+      if (ref.stickers?.size) {
+        const stickerTexts = [...ref.stickers.values()]
+          .map(formatStickerText)
+          .join(', ');
+        refContent += (refContent ? '\n' : '') + stickerTexts;
+      }
+
+      // Include GIF context from referenced message embeds
+      const refGifs = ref.embeds
+        .filter((e) => e.data?.type === 'gifv')
+        .map((e) => `[GIF: ${extractGifDescription(e.url || '', e)}]`);
+      if (refGifs.length) {
+        refContent += (refContent ? '\n' : '') + refGifs.join(', ');
+      }
+
       if (refContent) {
         parts.push(
           `[Replying to message from ${author}]\n${refContent}\n\n[Your message]`,
@@ -141,7 +270,10 @@ export async function buildPrompt(
       const embedTexts = (snap.embeds || [])
         .map((e) => [e.title, e.description].filter(Boolean).join(': '))
         .filter(Boolean);
-      const combined = [fwdContent, ...embedTexts].filter(Boolean).join('\n');
+      const stickerTexts = snap.stickers?.size
+        ? [...snap.stickers.values()].map(formatStickerText)
+        : [];
+      const combined = [fwdContent, ...embedTexts, ...stickerTexts].filter(Boolean).join('\n');
       if (combined) {
         parts.push(`[Forwarded message]\n${combined}\n`);
       }
@@ -154,6 +286,29 @@ export async function buildPrompt(
       .map((f) => `- ${f.filePath} (${f.name}, ${f.contentType || 'unknown'}, ${formatBytes(f.size)})`)
       .join('\n');
     parts.push(`[Attached files saved to disk]\n${fileList}\n`);
+  }
+
+  // Include sticker context
+  if (stickerContexts.length > 0) {
+    const stickerLines = stickerContexts.map((s) => {
+      const parts = [`"${s.name}"`];
+      if (s.description) parts.push(`(${s.description})`);
+      if (s.filePath) {
+        parts.push(`— image saved to ${s.filePath} (use Read tool to see it)`);
+      } else {
+        parts.push(`— ${s.format} format, no image available`);
+      }
+      return `- ${parts.join(' ')}`;
+    }).join('\n');
+    parts.push(`[Sticker${stickerContexts.length > 1 ? 's' : ''} sent]\n${stickerLines}\n`);
+  }
+
+  // Include GIF context from embeds
+  if (gifContexts.length > 0) {
+    const gifLines = gifContexts
+      .map((g) => `- ${g.description} (${g.url})`)
+      .join('\n');
+    parts.push(`[GIF${gifContexts.length > 1 ? 's' : ''} sent]\n${gifLines}\n`);
   }
 
   if (includeAuthor) {
@@ -180,13 +335,15 @@ async function buildBatchPrompt(
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const savedAtts = await downloadAttachments(msg.attachments, projectPath);
+    const stickerCtxs = await downloadStickers(msg.stickers, projectPath);
+    const gifCtxs = extractGifContext(msg);
     const authorName = getAuthorName(msg);
 
     if (messages.length > 1) {
-      const msgPrompt = await buildPrompt(msg, savedAtts, false);
+      const msgPrompt = await buildPrompt(msg, savedAtts, false, stickerCtxs, gifCtxs);
       parts.push(`[Message ${i + 1}/${messages.length} from ${authorName}]\n${msgPrompt}`);
     } else {
-      const msgPrompt = await buildPrompt(msg, savedAtts);
+      const msgPrompt = await buildPrompt(msg, savedAtts, true, stickerCtxs, gifCtxs);
       parts.push(msgPrompt);
     }
   }
@@ -239,7 +396,12 @@ export async function handleMessage(message: Message): Promise<void> {
       message.attachments,
       project.project_path,
     );
-    const prompt = await buildPrompt(message, savedAttachments);
+    const stickerContexts = await downloadStickers(
+      message.stickers,
+      project.project_path,
+    );
+    const gifContexts = extractGifContext(message);
+    const prompt = await buildPrompt(message, savedAttachments, true, stickerContexts, gifContexts);
 
     const result = await runWithRetry(prompt, project, session);
     await finalize(message, session, result);

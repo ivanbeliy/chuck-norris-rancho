@@ -24,7 +24,14 @@ vi.mock('stream/promises', () => ({
 import * as db from '../db.js';
 import * as spawner from '../spawner.js';
 import * as fmt from '../discord-format.js';
-import { handleMessage, downloadAttachments, getBufferedCount, clearBuffers } from '../router.js';
+import { handleMessage, downloadAttachments, downloadStickers, extractGifContext, getBufferedCount, clearBuffers } from '../router.js';
+
+function createFakeStickers(
+  items: Array<{ id: string; name: string; description: string | null; format: number; url: string }> = [],
+) {
+  const entries = items.map((item) => [item.id, item] as const);
+  return new Map(entries);
+}
 
 function createFakeAttachments(
   items: Array<{ name: string; url: string; size: number; contentType: string | null }> = [],
@@ -48,6 +55,8 @@ function createFakeMessage(overrides: Record<string, unknown> = {}) {
     reference: null,
     messageSnapshots: null,
     attachments: createFakeAttachments(),
+    stickers: new Map(),
+    embeds: [],
     reply: vi.fn().mockResolvedValue(undefined),
     react: vi.fn().mockResolvedValue(undefined),
     reactions: {
@@ -447,5 +456,232 @@ describe('message buffer', () => {
     expect(prompt).toContain('world');
     expect(prompt).toContain('[Message 3/3 from Carol]');
     expect(prompt).toContain('trigger');
+  });
+});
+
+describe('stickers and GIFs', () => {
+  it('includes sticker context in prompt for sticker-only message', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from('PNG data'))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const stickers = createFakeStickers([
+      { id: 'stk-1', name: 'Wave', description: 'Waving hello', format: 1, url: 'https://cdn.discordapp.com/stickers/stk-1.png' },
+    ]);
+
+    const msg = createFakeMessage({ content: '', stickers });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('[Sticker sent]');
+    expect(prompt).toContain('"Wave"');
+    expect(prompt).toContain('Waving hello');
+    expect(prompt).toContain('use Read tool to see it');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('includes text-only context for Lottie stickers', async () => {
+    const stickers = createFakeStickers([
+      { id: 'stk-2', name: 'Sparkle', description: 'Sparkle animation', format: 3, url: 'https://cdn.discordapp.com/stickers/stk-2.json' },
+    ]);
+
+    const msg = createFakeMessage({ content: 'ooh!', stickers });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('"Sparkle"');
+    expect(prompt).toContain('Lottie format, no image available');
+    expect(prompt).not.toContain('use Read tool');
+    expect(prompt).toContain('ooh!');
+  });
+
+  it('includes both sticker context and text content', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from('PNG data'))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const stickers = createFakeStickers([
+      { id: 'stk-3', name: 'Heart Eyes', description: null, format: 1, url: 'https://cdn.discordapp.com/stickers/stk-3.png' },
+    ]);
+
+    const msg = createFakeMessage({ content: 'I love it!', stickers });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('"Heart Eyes"');
+    expect(prompt).toContain('I love it!');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('extracts GIF context from Tenor gifv embeds', async () => {
+    const embeds = [
+      {
+        data: { type: 'gifv' },
+        url: 'https://tenor.com/view/thumbs-up-okay-nice-gif-12345',
+        description: null,
+        title: null,
+        provider: { name: 'Tenor' },
+      },
+    ];
+
+    const msg = createFakeMessage({
+      content: 'https://tenor.com/view/thumbs-up-okay-nice-gif-12345',
+      embeds,
+    });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('[GIF sent]');
+    expect(prompt).toContain('thumbs up okay nice');
+  });
+
+  it('handles sticker download failure gracefully', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
+
+    const stickers = createFakeStickers([
+      { id: 'stk-4', name: 'Broken', description: 'A broken sticker', format: 1, url: 'https://cdn.discordapp.com/stickers/stk-4.png' },
+    ]);
+
+    const msg = createFakeMessage({ content: '', stickers });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('"Broken"');
+    expect(prompt).toContain('A broken sticker');
+    // Should degrade to text-only, no file path
+    expect(prompt).toContain('PNG format, no image available');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('includes sticker context in reply to sticker-only message', async () => {
+    const refMessage = {
+      content: '',
+      author: { displayName: 'Mari', username: 'mari' },
+      embeds: [],
+      stickers: createFakeStickers([
+        { id: 'stk-5', name: 'Thumbs Up', description: 'Thumbs up', format: 1, url: 'https://cdn.discordapp.com/stickers/stk-5.png' },
+      ]),
+    };
+
+    const msg = createFakeMessage({
+      content: 'what does that mean?',
+      reference: { messageId: 'ref-sticker-msg' },
+    });
+    msg.channel.messages.fetch.mockResolvedValue(refMessage);
+
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('Replying to message from Mari');
+    expect(prompt).toContain('[Sticker: "Thumbs Up" — Thumbs up]');
+    expect(prompt).toContain('what does that mean?');
+  });
+
+  it('includes sticker context in forwarded sticker-only message', async () => {
+    const snapshots = new Map([
+      [
+        'snap-sticker',
+        {
+          content: '',
+          embeds: [],
+          stickers: createFakeStickers([
+            { id: 'stk-6', name: 'Party', description: 'Party popper', format: 1, url: 'https://cdn.discordapp.com/stickers/stk-6.png' },
+          ]),
+        },
+      ],
+    ]);
+
+    const msg = createFakeMessage({
+      content: 'look at this',
+      messageSnapshots: snapshots,
+    });
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('Forwarded message');
+    expect(prompt).toContain('[Sticker: "Party" — Party popper]');
+    expect(prompt).toContain('look at this');
+  });
+
+  it('includes sticker sent as reply to a message', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from('PNG data'))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const refMessage = {
+      content: 'How are you today?',
+      author: { displayName: 'Chuck', username: 'chuck' },
+      embeds: [],
+      stickers: new Map(),
+    };
+
+    const stickers = createFakeStickers([
+      { id: 'stk-7', name: 'Happy', description: 'Happy face', format: 1, url: 'https://cdn.discordapp.com/stickers/stk-7.png' },
+    ]);
+
+    const msg = createFakeMessage({
+      content: '',
+      reference: { messageId: 'ref-msg-happy' },
+      stickers,
+    });
+    msg.channel.messages.fetch.mockResolvedValue(refMessage);
+
+    await handleMessage(msg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('Replying to message from Chuck');
+    expect(prompt).toContain('How are you today?');
+    expect(prompt).toContain('[Sticker sent]');
+    expect(prompt).toContain('"Happy"');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('includes buffered sticker message in batch prompt', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from(Buffer.from('PNG data'))),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    // Step 1: buffer a sticker message while busy
+    vi.mocked(spawner.isRunning).mockReturnValue(true);
+
+    const stickerMsg = createFakeMessage({
+      content: '',
+      stickers: createFakeStickers([
+        { id: 'stk-8', name: 'Fire', description: null, format: 1, url: 'https://cdn.discordapp.com/stickers/stk-8.png' },
+      ]),
+    });
+    await handleMessage(stickerMsg);
+    expect(getBufferedCount('/tmp/proj')).toBe(1);
+
+    // Step 2: project becomes free, new text message flushes buffer
+    vi.mocked(spawner.isRunning).mockReturnValue(false);
+    vi.mocked(spawner.spawnClaude).mockResolvedValue(successResult);
+
+    const textMsg = createFakeMessage({ content: 'what was that?' });
+    await handleMessage(textMsg);
+
+    const prompt = vi.mocked(spawner.spawnClaude).mock.calls[0][0].prompt;
+    expect(prompt).toContain('2 more messages');
+    expect(prompt).toContain('[Message 1/2 from TestUser]');
+    expect(prompt).toContain('"Fire"');
+    expect(prompt).toContain('[Message 2/2 from TestUser]');
+    expect(prompt).toContain('what was that?');
+
+    vi.unstubAllGlobals();
   });
 });
