@@ -5,6 +5,7 @@ export interface SpawnOptions {
   projectPath: string;
   claudeSessionId: string | null;
   skipPermissions: boolean;
+  identity?: string | null;
 }
 
 export interface SpawnResult {
@@ -35,10 +36,15 @@ export function spawnClaude(options: SpawnOptions): Promise<SpawnResult> {
     args.push('--dangerously-skip-permissions');
   }
 
+  const identityEnv: Record<string, string> = options.identity
+    ? { CHUCK_WIKI_CLIENT_IDENTITY: options.identity }
+    : {};
+
   const child = cpSpawn('claude', args, {
     cwd: options.projectPath,
     env: {
       ...process.env,
+      ...identityEnv,
       PATH: `/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:${process.env.PATH || ''}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

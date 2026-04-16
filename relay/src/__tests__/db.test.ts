@@ -64,6 +64,30 @@ describe('projects', () => {
     db.createProject('ch-1', '/tmp/a', 'alpha');
     expect(() => db.createProject('ch-2', '/tmp/b', 'alpha')).toThrow();
   });
+
+  it('createProject without identity defaults to null', () => {
+    const p = db.createProject('ch-1', '/tmp/proj', 'no-id');
+    expect(p.identity).toBeNull();
+  });
+
+  it('createProject with identity persists it', () => {
+    const p = db.createProject('ch-1', '/tmp/proj', 'with-id', true, 'chuck-project-test');
+    expect(p.identity).toBe('chuck-project-test');
+    const fetched = db.getProjectByName('with-id');
+    expect(fetched!.identity).toBe('chuck-project-test');
+  });
+
+  it('updateProjectIdentity sets and clears', () => {
+    db.createProject('ch-1', '/tmp/proj', 'alpha');
+    expect(db.updateProjectIdentity('alpha', 'chuck-main')).toBe(true);
+    expect(db.getProjectByName('alpha')!.identity).toBe('chuck-main');
+    expect(db.updateProjectIdentity('alpha', null)).toBe(true);
+    expect(db.getProjectByName('alpha')!.identity).toBeNull();
+  });
+
+  it('updateProjectIdentity returns false for nonexistent project', () => {
+    expect(db.updateProjectIdentity('nope', 'chuck-main')).toBe(false);
+  });
 });
 
 describe('sessions', () => {

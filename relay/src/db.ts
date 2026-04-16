@@ -6,6 +6,7 @@ export interface Project {
   discord_channel_id: string;
   project_path: string;
   name: string;
+  identity: string | null;
   skip_permissions: boolean;
   created_at: string;
 }
@@ -37,6 +38,7 @@ export function initialize(dbPath: string): void {
       project_path TEXT NOT NULL,
       name TEXT UNIQUE NOT NULL,
       skip_permissions INTEGER DEFAULT 1,
+      identity TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -49,6 +51,16 @@ export function initialize(dbPath: string): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Migration: add identity column to existing DBs that predate it.
+  const col = db
+    .prepare(
+      "SELECT COUNT(*) AS c FROM pragma_table_info('projects') WHERE name = 'identity'",
+    )
+    .get() as { c: number };
+  if (col.c === 0) {
+    db.exec('ALTER TABLE projects ADD COLUMN identity TEXT');
+  }
 
   resetStuckSessions();
 }
@@ -64,13 +76,21 @@ export function createProject(
   path: string,
   name: string,
   skipPermissions = true,
+  identity: string | null = null,
 ): Project {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO projects (id, discord_channel_id, project_path, name, skip_permissions)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, channelId, path, name, skipPermissions ? 1 : 0);
+    `INSERT INTO projects (id, discord_channel_id, project_path, name, skip_permissions, identity)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, channelId, path, name, skipPermissions ? 1 : 0, identity);
   return getProjectById(id)!;
+}
+
+export function updateProjectIdentity(name: string, identity: string | null): boolean {
+  const result = db
+    .prepare('UPDATE projects SET identity = ? WHERE name = ?')
+    .run(identity, name);
+  return result.changes > 0;
 }
 
 export function getProjectByChannelId(channelId: string): Project | null {
@@ -106,7 +126,11 @@ function getProjectById(id: string): Project | null {
 }
 
 function toProject(row: any): Project {
-  return { ...row, skip_permissions: !!row.skip_permissions };
+  return {
+    ...row,
+    skip_permissions: !!row.skip_permissions,
+    identity: row.identity ?? null,
+  };
 }
 
 // --- Sessions ---

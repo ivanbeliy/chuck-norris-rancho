@@ -109,6 +109,12 @@ async function registerSlashCommands(token: string): Promise<void> {
               .setName('channel')
               .setDescription('Discord channel')
               .setRequired(true),
+          )
+          .addStringOption((o) =>
+            o
+              .setName('identity')
+              .setDescription('chuck-wiki MCP identity (e.g., chuck-main, chuck-project-rancho)')
+              .setRequired(false),
           ),
       )
       .addSubcommand((sub) =>
@@ -123,6 +129,23 @@ async function registerSlashCommands(token: string): Promise<void> {
               .setName('name')
               .setDescription('Project name')
               .setRequired(true),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('set-identity')
+          .setDescription('Set or clear chuck-wiki MCP identity for a project')
+          .addStringOption((o) =>
+            o
+              .setName('name')
+              .setDescription('Project name')
+              .setRequired(true),
+          )
+          .addStringOption((o) =>
+            o
+              .setName('identity')
+              .setDescription('Identity string, or empty to clear')
+              .setRequired(false),
           ),
       ),
     new SlashCommandBuilder()
@@ -151,6 +174,7 @@ async function handleCommand(
     if (sub === 'add') return handleProjectAdd(interaction);
     if (sub === 'list') return handleProjectList(interaction);
     if (sub === 'remove') return handleProjectRemove(interaction);
+    if (sub === 'set-identity') return handleProjectSetIdentity(interaction);
   }
 }
 
@@ -160,6 +184,7 @@ async function handleProjectAdd(
   const name = interaction.options.getString('name', true);
   const path = interaction.options.getString('path', true);
   const channel = interaction.options.getChannel('channel', true);
+  const identity = interaction.options.getString('identity', false);
 
   if (channel.type !== ChannelType.GuildText) {
     await interaction.reply({
@@ -185,9 +210,32 @@ async function handleProjectAdd(
     return;
   }
 
-  const project = db.createProject(channel.id, path, name);
+  const project = db.createProject(channel.id, path, name, true, identity);
+  const identityLine = project.identity ? `\nIdentity: \`${project.identity}\`` : '';
   await interaction.reply(
-    `Project **${project.name}** registered.\nChannel: <#${project.discord_channel_id}>\nPath: \`${project.project_path}\``,
+    `Project **${project.name}** registered.\nChannel: <#${project.discord_channel_id}>\nPath: \`${project.project_path}\`${identityLine}`,
+  );
+}
+
+async function handleProjectSetIdentity(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const name = interaction.options.getString('name', true);
+  const raw = interaction.options.getString('identity', false);
+  const identity = raw && raw.trim().length > 0 ? raw.trim() : null;
+
+  const updated = db.updateProjectIdentity(name, identity);
+  if (!updated) {
+    await interaction.reply({
+      content: `Project "${name}" not found.`,
+      ephemeral: true,
+    });
+    return;
+  }
+  await interaction.reply(
+    identity
+      ? `Identity for **${name}** set to \`${identity}\`.`
+      : `Identity for **${name}** cleared.`,
   );
 }
 
@@ -203,9 +251,10 @@ async function handleProjectList(
     return;
   }
 
-  const lines = projects.map(
-    (p) => `**${p.name}** — <#${p.discord_channel_id}> — \`${p.project_path}\``,
-  );
+  const lines = projects.map((p) => {
+    const id = p.identity ? ` — id:\`${p.identity}\`` : '';
+    return `**${p.name}** — <#${p.discord_channel_id}> — \`${p.project_path}\`${id}`;
+  });
   await interaction.reply(lines.join('\n'));
 }
 

@@ -463,6 +463,7 @@ async function runWithRetry(
     projectPath: project.project_path,
     claudeSessionId: session.claude_session_id,
     skipPermissions: project.skip_permissions,
+    identity: project.identity,
   });
 
   if (
@@ -480,6 +481,7 @@ async function runWithRetry(
       projectPath: project.project_path,
       claudeSessionId: null,
       skipPermissions: project.skip_permissions,
+      identity: project.identity,
     });
   }
 
