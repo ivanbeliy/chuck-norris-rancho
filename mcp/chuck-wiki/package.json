@@ -1,0 +1,31 @@
+{
+  "name": "chuck-wiki-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing Chuck's Obsidian vault to Claude Code sessions (read + contribute)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "chuck-wiki-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  }
+}
