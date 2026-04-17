@@ -151,6 +151,14 @@ async function registerSlashCommands(token: string): Promise<void> {
     new SlashCommandBuilder()
       .setName('status')
       .setDescription('Show session status for all projects'),
+    new SlashCommandBuilder()
+      .setName('webhook')
+      .setDescription('Manage channel webhooks')
+      .addSubcommand((sub) =>
+        sub
+          .setName('create')
+          .setDescription('Create (or return existing) chuck-wiki webhook in this channel'),
+      ),
   ];
 
   const rest = new REST({ version: '10' }).setToken(token);
@@ -175,6 +183,11 @@ async function handleCommand(
     if (sub === 'list') return handleProjectList(interaction);
     if (sub === 'remove') return handleProjectRemove(interaction);
     if (sub === 'set-identity') return handleProjectSetIdentity(interaction);
+  }
+
+  if (commandName === 'webhook') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'create') return handleWebhookCreate(interaction);
   }
 }
 
@@ -268,6 +281,51 @@ async function handleProjectRemove(
   } else {
     await interaction.reply({
       content: `Project "${name}" not found.`,
+      ephemeral: true,
+    });
+  }
+}
+
+const WEBHOOK_NAME = 'chuck-wiki-webhook';
+
+async function handleWebhookCreate(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const channel = interaction.channel;
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      content: 'Use this in a text channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  try {
+    const existing = await channel.fetchWebhooks();
+    const found = existing.find((w) => w.name === WEBHOOK_NAME);
+    if (found) {
+      await interaction.reply({
+        content: `Existing webhook **${WEBHOOK_NAME}** in <#${channel.id}>:\n\`${found.url}\`\n\nPaste into Mac Mini launchd env as \`CHUCK_WIKI_DISCORD_WEBHOOK_URL\`.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const created = await channel.createWebhook({
+      name: WEBHOOK_NAME,
+      reason: 'chuck-wiki MCP auto-process notifications',
+    });
+    await interaction.reply({
+      content: `Created webhook **${WEBHOOK_NAME}** in <#${channel.id}>:\n\`${created.url}\`\n\nPaste into Mac Mini launchd env as \`CHUCK_WIKI_DISCORD_WEBHOOK_URL\`. Treat it like a secret — anyone with this URL can post to this channel.`,
+      ephemeral: true,
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    const hint = msg.toLowerCase().includes('missing permissions')
+      ? '\nHint: bot needs **Manage Webhooks** permission on this channel.'
+      : '';
+    await interaction.reply({
+      content: `Failed to create webhook: ${msg}${hint}`,
       ephemeral: true,
     });
   }
