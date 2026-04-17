@@ -1,12 +1,24 @@
-# Force LF line endings for shell scripts (critical for Linux VM and macOS execution)
-*.sh text eol=lf
+# Normalize line endings: LF in repo and in working tree on all platforms.
+# Kills CRLF/LF phantom modifies on Windows clients.
+* text=auto eol=lf
 
-# Force LF for launchd plists (macOS)
+# Shell scripts and plists are executed on macOS/Linux — LF is mandatory.
+*.sh   text eol=lf
 *.plist text eol=lf
 
-# Keep other text files with auto-detection
-*.md text
-*.json text
-*.env text
-*.yml text
-*.yaml text
+# Binaries: never convert.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tar  binary
+*.woff  binary
+*.woff2 binary
+
+# Node native binding artifacts (in node_modules, but be safe).
+*.node binary
