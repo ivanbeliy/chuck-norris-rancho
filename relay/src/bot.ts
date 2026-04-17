@@ -9,6 +9,7 @@ import {
 } from 'discord.js';
 import * as db from './db.js';
 import * as router from './router.js';
+import * as watcher from './watcher.js';
 
 let client: Client;
 
@@ -26,6 +27,7 @@ export async function start(token: string): Promise<void> {
       `[${new Date().toISOString()}] Relay online as ${client.user!.tag}`,
     );
     await registerSlashCommands(token);
+    watcher.startWatcher(client);
   });
 
   client.on('messageCreate', async (message) => {
@@ -79,6 +81,7 @@ export async function start(token: string): Promise<void> {
 }
 
 export async function destroy(): Promise<void> {
+  watcher.stopWatcher();
   if (client) {
     client.destroy();
   }

@@ -451,6 +451,47 @@ async function drainBuffer(project: db.Project): Promise<void> {
   await processBatch(buffered, project);
 }
 
+// ── Auto-review trigger (called by watcher when a new proposal arrives) ───
+
+export async function handleAutoReview(
+  project: db.Project,
+  proposalFile: string,
+): Promise<spawner.SpawnResult> {
+  const pp = project.project_path;
+
+  // Wait until any user-message processing finishes. Poll cheaply; auto-review is not urgent.
+  while (processing.has(pp) || spawner.isRunning(pp)) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  processing.add(pp);
+  try {
+    const session = db.getOrCreateSession(project.id);
+    db.updateSessionStatus(session.id, 'running');
+
+    const prompt = [
+      `[auto-review trigger] New proposal arrived in this vault: \`proposals/${proposalFile}\`.`,
+      ``,
+      `Read its frontmatter (target_path, contributed_by, contribution_reason) and body.`,
+      `If target_path already exists, read it and show a brief diff preview (what the proposal adds/changes).`,
+      ``,
+      `Present concisely in one message:`,
+      `1. From whom, where it wants to land, why.`,
+      `2. TL;DR of the proposal.`,
+      `3. Similarity context (use search_notes or the decision reason in the proposal frontmatter).`,
+      `4. Options: accept / merge / edit / reject.`,
+      ``,
+      `Then STOP and wait for user's decision. Do NOT integrate yet.`,
+    ].join('\n');
+
+    const result = await runWithRetry(prompt, project, session);
+    updateSession(session, result);
+    return result;
+  } finally {
+    processing.delete(pp);
+  }
+}
+
 // ── Spawn with session-error retry ───────────────────────────
 
 async function runWithRetry(
