@@ -404,7 +404,7 @@ export async function handleMessage(message: Message): Promise<void> {
     const prompt = await buildPrompt(message, savedAttachments, true, stickerContexts, gifContexts);
 
     const result = await runWithRetry(prompt, project, session);
-    await finalize(message, session, result);
+    await finalize(message, session, result, project.project_path);
 
     // Drain any messages that arrived while we were busy
     await drainBuffer(project);
@@ -430,7 +430,7 @@ async function processBatch(
 
   const prompt = await buildBatchPrompt(messages, project.project_path);
   const result = await runWithRetry(prompt, project, session);
-  await finalizeBatch(messages, session, result);
+  await finalizeBatch(messages, session, result, project.project_path);
 
   // Drain any messages that arrived during this batch
   await drainBuffer(project);
@@ -535,15 +535,13 @@ async function finalize(
   message: Message,
   session: db.Session,
   result: spawner.SpawnResult,
+  projectPath: string,
 ): Promise<void> {
   updateSession(session, result);
 
   if (result.success) {
     const formatted = fmt.formatResult(result.result, result.costUsd);
-    const chunks = fmt.splitMessage(formatted);
-    for (const chunk of chunks) {
-      await message.reply(chunk);
-    }
+    await replyWithAttachments(message, formatted, projectPath);
   } else {
     await message.reply(
       fmt.formatError(result.error || 'Unknown error'),
@@ -565,6 +563,7 @@ async function finalizeBatch(
   messages: Message[],
   session: db.Session,
   result: spawner.SpawnResult,
+  projectPath: string,
 ): Promise<void> {
   updateSession(session, result);
 
@@ -573,10 +572,7 @@ async function finalizeBatch(
   // Reply to the last message
   if (result.success) {
     const formatted = fmt.formatResult(result.result, result.costUsd);
-    const chunks = fmt.splitMessage(formatted);
-    for (const chunk of chunks) {
-      await lastMessage.reply(chunk);
-    }
+    await replyWithAttachments(lastMessage, formatted, projectPath);
   } else {
     await lastMessage.reply(
       fmt.formatError(result.error || 'Unknown error'),
@@ -596,6 +592,39 @@ async function finalizeBatch(
       .catch(() => {});
     await msg.react(emoji).catch(() => {});
   }
+}
+
+// ── Reply with outgoing attachments ──────────────────────────
+
+async function replyWithAttachments(
+  message: Message,
+  formatted: string,
+  projectPath: string,
+): Promise<void> {
+  const { content, files } = fmt.extractAttachments(formatted, projectPath);
+
+  if (!content && files.length === 0) {
+    await message.reply(fmt.formatError('Empty response'));
+    return;
+  }
+
+  // Fast path: no outgoing files — preserve legacy string-payload behaviour.
+  if (files.length === 0) {
+    for (const chunk of fmt.splitMessage(content)) {
+      await message.reply(chunk);
+    }
+    return;
+  }
+
+  // Files go with the last chunk (or stand alone if content is empty).
+  const chunks = content ? fmt.splitMessage(content) : [];
+  for (let i = 0; i < chunks.length - 1; i++) {
+    await message.reply(chunks[i]);
+  }
+  const lastContent = chunks.length > 0 ? chunks[chunks.length - 1] : '';
+  const payload: { content?: string; files: string[] } = { files };
+  if (lastContent) payload.content = lastContent;
+  await message.reply(payload as any);
 }
 
 // ── Helpers ──────────────────────────────────────────────────

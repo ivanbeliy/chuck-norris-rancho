@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { formatResult, formatError, splitMessage } from '../discord-format.js';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
+import { tmpdir } from 'os';
+import * as path from 'path';
+import {
+  formatResult,
+  formatError,
+  splitMessage,
+  extractAttachments,
+} from '../discord-format.js';
 
 describe('formatResult', () => {
   it('returns result as-is', () => {
@@ -94,5 +102,112 @@ describe('splitMessage', () => {
     // Total output is much less than input
     const totalOutput = chunks.reduce((sum, c) => sum + c.length, 0);
     expect(totalOutput).toBeLessThan(text.length);
+  });
+});
+
+describe('extractAttachments', () => {
+  let projectPath: string;
+  let outsidePath: string;
+
+  beforeAll(() => {
+    projectPath = mkdtempSync(path.join(tmpdir(), 'relay-fmt-proj-'));
+    outsidePath = mkdtempSync(path.join(tmpdir(), 'relay-fmt-out-'));
+
+    mkdirSync(path.join(projectPath, '.attachments'), { recursive: true });
+    writeFileSync(path.join(projectPath, '.attachments', 'chart.png'), 'PNG');
+    writeFileSync(path.join(projectPath, '.attachments', 'report.pdf'), 'PDF');
+    writeFileSync(path.join(projectPath, 'docs.txt'), 'doc');
+    writeFileSync(path.join(outsidePath, 'secret.env'), 'SECRET=1');
+  });
+
+  afterAll(() => {
+    rmSync(projectPath, { recursive: true, force: true });
+    rmSync(outsidePath, { recursive: true, force: true });
+  });
+
+  it('returns original text and empty files when nothing to extract', () => {
+    const { content, files } = extractAttachments('plain text', projectPath);
+    expect(content).toBe('plain text');
+    expect(files).toEqual([]);
+  });
+
+  it('extracts markdown image with relative path', () => {
+    const text = 'See chart: ![](.attachments/chart.png)';
+    const { content, files } = extractAttachments(text, projectPath);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toBe(path.resolve(projectPath, '.attachments/chart.png'));
+    expect(content).toBe('See chart:');
+  });
+
+  it('keeps alt text when markdown image has alt', () => {
+    const text = '![pretty chart](.attachments/chart.png)';
+    const { content } = extractAttachments(text, projectPath);
+    expect(content).toBe('pretty chart');
+  });
+
+  it('extracts [attach: path] marker and strips it', () => {
+    const text = 'Here is the report.\n[attach: .attachments/report.pdf]';
+    const { content, files } = extractAttachments(text, projectPath);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toBe(
+      path.resolve(projectPath, '.attachments/report.pdf'),
+    );
+    expect(content).toBe('Here is the report.');
+  });
+
+  it('handles multiple markers and de-duplicates', () => {
+    const text =
+      '![](.attachments/chart.png)\n[attach: .attachments/chart.png]\n[attach: .attachments/report.pdf]';
+    const { files } = extractAttachments(text, projectPath);
+    expect(files).toHaveLength(2);
+  });
+
+  it('leaves http/https image URLs untouched', () => {
+    const text = '![remote](https://example.com/x.png)';
+    const { content, files } = extractAttachments(text, projectPath);
+    expect(files).toEqual([]);
+    expect(content).toBe(text);
+  });
+
+  it('rejects paths outside projectPath (traversal)', () => {
+    const escape = path.relative(projectPath, path.join(outsidePath, 'secret.env'));
+    const text = `[attach: ${escape}]`;
+    const { files } = extractAttachments(text, projectPath);
+    expect(files).toEqual([]);
+  });
+
+  it('rejects absolute paths outside projectPath', () => {
+    const text = `[attach: ${path.join(outsidePath, 'secret.env')}]`;
+    const { files } = extractAttachments(text, projectPath);
+    expect(files).toEqual([]);
+  });
+
+  it('accepts absolute paths inside projectPath', () => {
+    const abs = path.join(projectPath, 'docs.txt');
+    const { files } = extractAttachments(`[attach: ${abs}]`, projectPath);
+    expect(files).toEqual([path.resolve(abs)]);
+  });
+
+  it('drops missing files silently', () => {
+    const { files } = extractAttachments(
+      '[attach: .attachments/nope.png]',
+      projectPath,
+    );
+    expect(files).toEqual([]);
+  });
+
+  it('caps attachments at 10', () => {
+    for (let i = 0; i < 12; i++) {
+      writeFileSync(path.join(projectPath, `f${i}.txt`), `${i}`);
+    }
+    const markers = Array.from({ length: 12 }, (_, i) => `[attach: f${i}.txt]`).join('\n');
+    const { files } = extractAttachments(markers, projectPath);
+    expect(files).toHaveLength(10);
+  });
+
+  it('collapses blank lines left by stripped markers', () => {
+    const text = 'Before\n\n[attach: docs.txt]\n\nAfter';
+    const { content } = extractAttachments(text, projectPath);
+    expect(content).toBe('Before\n\nAfter');
   });
 });

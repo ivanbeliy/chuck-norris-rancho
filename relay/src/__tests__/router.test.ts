@@ -118,6 +118,7 @@ beforeEach(() => {
   vi.mocked(fmt.formatResult).mockReturnValue('Done!');
   vi.mocked(fmt.splitMessage).mockReturnValue(['Done!']);
   vi.mocked(fmt.formatError).mockReturnValue('**Error:**\n```\nSomething broke\n```');
+  vi.mocked(fmt.extractAttachments).mockReturnValue({ content: 'Done!', files: [] });
 });
 
 describe('handleMessage', () => {

@@ -49,3 +49,17 @@ Relay MUST NOT:
 - Modify prompts or add system prompts
 - Use Claude API directly
 - Use `--bare` flag (breaks OAuth subscription auth and CLAUDE.md discovery)
+
+## Outgoing attachment contract
+
+Claude can post files back to Discord by placing one of these in its text output — Relay parses them in `discord-format.ts:extractAttachments`, strips the markers, and attaches the files to the reply (last chunk if split).
+
+- `![alt](<path>)` — markdown image, used for inline images. Alt text is kept, marker is removed.
+- `[attach: <path>]` — explicit marker, used for any file type (images, PDFs, docs, etc.). Removed from text.
+
+Rules enforced by Relay:
+- Paths are resolved relative to the project's `cwd`; absolute paths are accepted only when they resolve **under** the project directory (traversal rejected).
+- `http://`, `https://`, and `data:` URLs in `![](…)` are left untouched — Discord auto-embeds them.
+- Files must exist and be ≤ 25 MB.
+- Maximum 10 attachments per reply (Discord hard limit).
+- Missing / oversize / out-of-project paths are dropped silently (logged to stderr).
