@@ -11,7 +11,7 @@ export interface LogEntry {
   ts: string;
   tool: string;
   identity: string;
-  action: 'ok' | 'rejected';
+  action: 'ok' | 'rejected' | 'ok+auto-integrated' | 'ok+pending';
   reason?: string;
   path?: string;
   target?: string;

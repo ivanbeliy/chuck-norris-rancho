@@ -162,6 +162,24 @@ export interface SearchHit {
   tags: string[];
 }
 
+const STOPWORDS = new Set([
+  'and', 'the', 'for', 'are', 'was', 'were', 'with', 'that', 'this', 'these', 'those',
+  'from', 'have', 'has', 'had', 'but', 'not', 'you', 'your', 'our', 'all', 'any',
+  'can', 'may', 'will', 'new', 'about', 'into', 'only', 'out', 'over', 'more', 'most',
+  'than', 'then', 'when', 'which', 'who', 'what', 'where', 'why', 'how', 'also', 'some',
+  'just', 'like', 'been', 'being', 'does', 'did', 'done', 'off', 'use', 'used', 'get', 'got',
+  'here', 'there', 'them', 'they', 'their', 'its', 'itself', 'him', 'her', 'his', 'she',
+  'because', 'should', 'would', 'could', 'one', 'two', 'three', 'via', 'per',
+]);
+
+export function tokenize(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\p{L}\p{N}_-]/gu, ''))
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+}
+
 export async function searchNotes(
   query: string,
   scope: 'sources' | 'wiki' | 'all' = 'all',
@@ -173,11 +191,7 @@ export async function searchNotes(
   const files: string[] = [];
   for (const s of subdirs) files.push(...(await listMarkdown(s)));
 
-  const tokens = query
-    .toLowerCase()
-    .split(/\s+/)
-    .map((t) => t.replace(/[^\p{L}\p{N}_-]/gu, ''))
-    .filter((t) => t.length >= 2);
+  const tokens = tokenize(query);
 
   if (tokens.length === 0) return [];
 
