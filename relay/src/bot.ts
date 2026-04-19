@@ -87,6 +87,10 @@ export async function destroy(): Promise<void> {
   }
 }
 
+export function getClient(): Client {
+  return client;
+}
+
 // --- Slash Commands ---
 
 async function registerSlashCommands(token: string): Promise<void> {
