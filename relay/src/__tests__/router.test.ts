@@ -96,6 +96,9 @@ const successResult: spawner.SpawnResult = {
   result: 'Done!',
   claudeSessionId: 'claude-2',
   costUsd: '0.05',
+  peakRssKb: 450_000,
+  durationMs: 1234,
+  resumed: true,
 };
 
 const errorResult: spawner.SpawnResult = {
@@ -104,6 +107,9 @@ const errorResult: spawner.SpawnResult = {
   claudeSessionId: 'claude-1',
   costUsd: null,
   error: 'Something broke',
+  peakRssKb: null,
+  durationMs: 500,
+  resumed: true,
 };
 
 beforeEach(() => {
@@ -177,6 +183,9 @@ describe('handleMessage', () => {
       claudeSessionId: 'claude-1',
       costUsd: null,
       error: 'session expired',
+      peakRssKb: null,
+      durationMs: 500,
+      resumed: true,
     };
 
     vi.mocked(spawner.spawnClaude)
