@@ -50,6 +50,22 @@ export function initialize(dbPath: string): void {
       last_active DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS spawn_log (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      claude_session_id TEXT,
+      kind TEXT NOT NULL,
+      resumed INTEGER NOT NULL CHECK(resumed IN (0, 1)),
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      duration_ms INTEGER,
+      peak_rss_kb INTEGER,
+      success INTEGER NOT NULL CHECK(success IN (0, 1)),
+      cost_usd REAL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_spawn_log_project_started
+      ON spawn_log(project_id, started_at DESC);
   `);
 
   // Migration: add identity column to existing DBs that predate it.
@@ -174,6 +190,37 @@ export function getAllSessions(): SessionWithProject[] {
        ORDER BY p.name`,
     )
     .all() as SessionWithProject[];
+}
+
+// --- Spawn log ---
+
+export interface SpawnLogEntry {
+  projectId: string;
+  claudeSessionId: string | null;
+  kind: string;
+  resumed: boolean;
+  durationMs: number | null;
+  peakRssKb: number | null;
+  success: boolean;
+  costUsd: number | null;
+}
+
+export function insertSpawnLog(entry: SpawnLogEntry): void {
+  db.prepare(
+    `INSERT INTO spawn_log
+       (id, project_id, claude_session_id, kind, resumed, duration_ms, peak_rss_kb, success, cost_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    entry.projectId,
+    entry.claudeSessionId,
+    entry.kind,
+    entry.resumed ? 1 : 0,
+    entry.durationMs,
+    entry.peakRssKb,
+    entry.success ? 1 : 0,
+    entry.costUsd,
+  );
 }
 
 function resetStuckSessions(): void {

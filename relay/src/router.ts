@@ -403,7 +403,7 @@ export async function handleMessage(message: Message): Promise<void> {
     const gifContexts = extractGifContext(message);
     const prompt = await buildPrompt(message, savedAttachments, true, stickerContexts, gifContexts);
 
-    const result = await runWithRetry(prompt, project, session);
+    const result = await runWithRetry(prompt, project, session, 'user');
     await finalize(message, session, result, project.project_path);
 
     // Drain any messages that arrived while we were busy
@@ -429,7 +429,7 @@ async function processBatch(
   }
 
   const prompt = await buildBatchPrompt(messages, project.project_path);
-  const result = await runWithRetry(prompt, project, session);
+  const result = await runWithRetry(prompt, project, session, 'user');
   await finalizeBatch(messages, session, result, project.project_path);
 
   // Drain any messages that arrived during this batch
@@ -484,7 +484,7 @@ export async function handleAutoReview(
       `Then STOP and wait for user's decision. Do NOT integrate yet.`,
     ].join('\n');
 
-    const result = await runWithRetry(prompt, project, session);
+    const result = await runWithRetry(prompt, project, session, 'auto_review');
     updateSession(session, result);
     return result;
   } finally {
@@ -498,6 +498,7 @@ async function runWithRetry(
   prompt: string,
   project: db.Project,
   session: db.Session,
+  kind: string,
 ): Promise<spawner.SpawnResult> {
   const result = await spawner.spawnClaude({
     prompt,
@@ -505,7 +506,9 @@ async function runWithRetry(
     claudeSessionId: session.claude_session_id,
     skipPermissions: project.skip_permissions,
     identity: project.identity,
+    kind,
   });
+  logSpawn(project.id, result, kind);
 
   if (
     !result.success &&
@@ -517,16 +520,43 @@ async function runWithRetry(
     );
     db.updateSessionClaudeId(session.id, null);
 
-    return spawner.spawnClaude({
+    const retry = await spawner.spawnClaude({
       prompt,
       projectPath: project.project_path,
       claudeSessionId: null,
       skipPermissions: project.skip_permissions,
       identity: project.identity,
+      kind,
     });
+    logSpawn(project.id, retry, kind);
+    return retry;
   }
 
   return result;
+}
+
+function logSpawn(
+  projectId: string,
+  result: spawner.SpawnResult,
+  kind: string,
+): void {
+  try {
+    db.insertSpawnLog({
+      projectId,
+      claudeSessionId: result.claudeSessionId || null,
+      kind,
+      resumed: result.resumed,
+      durationMs: result.durationMs,
+      peakRssKb: result.peakRssKb,
+      success: result.success,
+      costUsd: result.costUsd ? Number(result.costUsd) : null,
+    });
+  } catch (err) {
+    console.error(
+      `[${new Date().toISOString()}] Failed to write spawn_log for ${projectId}:`,
+      err,
+    );
+  }
 }
 
 // ── Finalize: single message ─────────────────────────────────

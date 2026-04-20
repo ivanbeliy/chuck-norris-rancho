@@ -1,3 +1,7 @@
+// Disable RSS sampling and raise concurrency cap before spawner loads module-level config.
+process.env.RELAY_RSS_SAMPLE_INTERVAL_MS = '0';
+process.env.RELAY_MAX_CONCURRENT_CLAUDE = '999';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
@@ -5,6 +9,7 @@ import { PassThrough } from 'stream';
 // Mock child_process before importing spawner
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 import { spawn as cpSpawn } from 'child_process';
@@ -83,6 +88,49 @@ describe('spawnClaude', () => {
     child.stdout.end(JSON.stringify({ result: 'ok', session_id: 'session-abc' }));
     child.emit('close', 0);
     await promise;
+  });
+
+  it('skips --resume when resumeSession is explicitly false even if claudeSessionId is set', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: 'session-abc',
+      skipPermissions: false,
+      resumeSession: false,
+    });
+
+    const args = (cpSpawn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(args).not.toContain('--resume');
+    expect(args).not.toContain('session-abc');
+
+    child.stdout.end(JSON.stringify({ result: 'ok', session_id: 'new-session' }));
+    child.emit('close', 0);
+    const result = await promise;
+    expect(result.resumed).toBe(false);
+  });
+
+  it('reports peakRssKb null and durationMs on result when sampling disabled', async () => {
+    const child = createFakeChild();
+    mockSpawn(child);
+
+    const promise = spawnClaude({
+      prompt: 'hello',
+      projectPath: '/tmp/proj',
+      claudeSessionId: null,
+      skipPermissions: false,
+    });
+
+    child.stdout.end(JSON.stringify({ result: 'ok' }));
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.peakRssKb).toBeNull();
+    expect(typeof result.durationMs).toBe('number');
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.resumed).toBe(false);
   });
 
   it('adds --dangerously-skip-permissions when skipPermissions is true', async () => {
