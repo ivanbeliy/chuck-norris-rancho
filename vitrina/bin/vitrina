@@ -1,0 +1,205 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * vitrina — publish an artifact to Rancho and get a shareable link.
+ * Thin client over the loopback admin API; every Chuck session calls this.
+ */
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'rancho');
+
+function loadEnvFile(file) {
+  try {
+    for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  } catch { /* optional */ }
+}
+loadEnvFile(path.join(CONFIG_DIR, 'vitrina.env'));
+
+const API = `http://127.0.0.1:${process.env.VITRINA_ADMIN_PORT || 4478}`;
+const TOKEN = process.env.VITRINA_TOKEN || '';
+
+function die(msg) { console.error(`vitrina: ${msg}`); process.exit(1); }
+
+function parseArgs(argv) {
+  const flags = {}; const rest = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const [k, inline] = a.slice(2).split('=');
+      const key = k.replace(/-/g, '_');
+      if (inline !== undefined) { push(flags, key, inline); continue; }
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) push(flags, key, true);
+      else { push(flags, key, next); i++; }
+    } else rest.push(a);
+  }
+  return { flags, rest };
+}
+function push(o, k, v) {
+  if (o[k] === undefined) o[k] = v;
+  else if (Array.isArray(o[k])) o[k].push(v);
+  else o[k] = [o[k], v];
+}
+
+/** Project name for the current directory, from Relay's own registry. */
+function detectProject() {
+  // Relay's own env sets RELAY_DB_PATH=./relay.db, relative to *its* cwd — honour
+  // it only when absolute, or sqlite3 would silently create an empty db here.
+  const envDb = process.env.RELAY_DB_PATH;
+  const db = envDb && path.isAbsolute(envDb) ? envDb : path.join(os.homedir(), 'relay', 'relay.db');
+  const cwd = process.cwd();
+  try {
+    if (!fs.existsSync(db)) return path.basename(cwd);
+    const out = execFileSync('sqlite3',
+      ['-readonly', db, 'SELECT name || "\t" || project_path FROM projects'],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    let best = null;
+    for (const line of out.trim().split('\n')) {
+      const [name, p] = line.split('\t');
+      if (!p) continue;
+      if (cwd === p || cwd.startsWith(p + path.sep)) {
+        if (!best || p.length > best.len) best = { name, len: p.length };
+      }
+    }
+    if (best) return best.name;
+  } catch { /* fall through */ }
+  return path.basename(cwd);
+}
+
+async function api(method, route, body) {
+  const res = await fetch(API + route, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(TOKEN ? { 'X-Vitrina-Token': TOKEN } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).catch((e) => die(`service unreachable on ${API} (${e.message}). Is com.rancho.vitrina running?`));
+  const text = await res.text();
+  let out;
+  try { out = JSON.parse(text); } catch { die(`bad response: ${text.slice(0, 200)}`); }
+  if (!res.ok) die(out.error || text);
+  return out;
+}
+
+const USAGE = `vitrina — self-hosted artifacts on Rancho
+
+  vitrina publish --file <path> [--type html|react|md] --title "…" [--desc "…"]
+                  [--to <audience>] [--vis link|code|private|portal] [--code 1234]
+                  [--expires 90d|never] [--project <name>] [--update <slug>]
+                  [--asset <path>]…  [--share <project>]  [--json]
+  vitrina list [--project <name>] [--to <audience>] [--json]
+  vitrina info <slug>            vitrina hits <slug>
+  vitrina revoke <slug>          vitrina extend <slug> <90d|never>
+  vitrina share <slug> --to-channel <project> [--text "…"]
+  vitrina portals                vitrina gc
+
+Defaults: --type html (by extension: .md -> md, .jsx -> react)  --to family  --vis link
+          --expires 90d  --project <auto from cwd>.  --update keeps every omitted field.
+Visibility: link = anyone with the URL · code = URL + digit code · portal = only people
+            who opened their /p/ portal and are in --to · private = tailnet only (never public)`;
+
+async function main() {
+  const [cmd, ...argv] = process.argv.slice(2);
+  const { flags, rest } = parseArgs(argv);
+
+  switch (cmd) {
+    case 'publish': {
+      const file = flags.file || rest[0];
+      if (!file) die('--file is required');
+      if (!fs.existsSync(file)) die(`no such file: ${file}`);
+      const type = flags.type || (/\.(md|markdown)$/i.test(file) ? 'md'
+        : /\.(jsx|js)$/i.test(file) ? 'react' : 'html');
+      const assets = [].concat(flags.asset || []).filter((a) => typeof a === 'string').map((a) => ({
+        name: path.basename(a), b64: fs.readFileSync(a).toString('base64'),
+      }));
+      // Only send what was given: on --update the service keeps every omitted
+      // field (title, vis, audience, code, expiry) from the previous version.
+      const isUpdate = typeof flags.update === 'string';
+      const out = await api('POST', '/api/publish', {
+        source: fs.readFileSync(file, 'utf-8'),
+        type: flags.type || type,
+        title: flags.title || (isUpdate ? undefined : path.basename(file).replace(/\.[^.]+$/, '')),
+        desc: flags.desc,
+        audience: flags.to,
+        vis: flags.vis,
+        code: flags.code !== undefined ? String(flags.code) : undefined,
+        expires: flags.expires,
+        project: flags.project || (isUpdate ? undefined : detectProject()),
+        update: isUpdate ? flags.update : undefined,
+        assets,
+      });
+      if (flags.share && typeof flags.share === 'string') {
+        await api('POST', '/api/share', { slug: out.slug, project: flags.share });
+        out.shared_to = flags.share;
+      }
+      if (flags.json) return console.log(JSON.stringify(out));
+      console.log(out.url);
+      console.error(`  slug ${out.slug}  v${out.version}  vis=${out.vis}  to=${out.audience}` +
+        `  ${out.expires_at ? `until ${out.expires_at.slice(0, 10)}` : 'no expiry'}` +
+        `${out.shared_to ? `  shared -> #${out.shared_to}` : ''}`);
+      return;
+    }
+    case 'list': {
+      const q = new URLSearchParams();
+      if (flags.project) q.set('project', flags.project);
+      if (flags.to) q.set('audience', flags.to);
+      const out = await api('GET', '/api/list?' + q);
+      if (flags.json) return console.log(JSON.stringify(out, null, 2));
+      if (!out.count) return console.log('(порожньо)');
+      for (const m of out.items) {
+        console.log(`${m.slug}  ${m.expired ? 'EXPIRED' : m.vis.padEnd(7)}  ${String(m.project).padEnd(16)}  ${m.title}`);
+      }
+      console.log(`\n${out.count} artifact(s)`);
+      return;
+    }
+    case 'info': {
+      const slug = flags.slug || rest[0]; if (!slug) die('slug required');
+      return console.log(JSON.stringify(await api('GET', `/api/info?slug=${slug}`), null, 2));
+    }
+    case 'hits': {
+      const slug = flags.slug || rest[0]; if (!slug) die('slug required');
+      const out = await api('GET', `/api/hits?slug=${slug}`);
+      if (!out.hits.length) return console.log('(жодного відкриття)');
+      for (const h of out.hits) console.log(`${h.t}  ${h.kind.padEnd(9)}  ip:${h.ip}  ${h.funnel ? 'funnel' : 'tailnet'}  ${h.ua.slice(0, 60)}`);
+      return;
+    }
+    case 'revoke': {
+      const slug = flags.slug || rest[0]; if (!slug) die('slug required');
+      await api('POST', '/api/revoke', { slug });
+      return console.log(`revoked ${slug}`);
+    }
+    case 'extend': {
+      const slug = rest[0]; const spec = rest[1] || flags.expires;
+      if (!slug || !spec) die('usage: vitrina extend <slug> <90d|never>');
+      const out = await api('POST', '/api/extend', { slug, expires: spec === 'never' ? 'never' : spec });
+      return console.log(`${slug} -> ${out.expires_at || 'no expiry'}`);
+    }
+    case 'share': {
+      const slug = flags.slug || rest[0];
+      const project = flags.to_channel || flags.channel;
+      if (!slug || !project) die('usage: vitrina share <slug> --to-channel <project>');
+      const out = await api('POST', '/api/share', { slug, project, text: flags.text });
+      return console.log(`shared ${out.slug} -> #${out.project}`);
+    }
+    case 'portals': {
+      const out = await api('GET', '/api/portals');
+      for (const p of out.people) console.log(`${String(p.key).padEnd(10)} ${String(p.name || '').padEnd(12)} ${p.portal || '(no token)'}`);
+      console.log('\naudiences:');
+      for (const [a, m] of Object.entries(out.audiences)) console.log(`  ${a.padEnd(10)} ${m.join(', ')}`);
+      return;
+    }
+    case 'gc': {
+      const out = await api('POST', '/api/gc', {});
+      return console.log(out.purged.length ? `purged: ${out.purged.join(', ')}` : 'nothing to purge');
+    }
+    default:
+      console.log(USAGE);
+      process.exit(cmd ? 1 : 0);
+  }
+}
+
+main().catch((e) => die(e.message));

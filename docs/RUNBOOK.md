@@ -169,6 +169,32 @@ bash scripts/restart.sh
 ssh rancho "cp ~/relay/relay.db ~/relay/relay.db.bak"
 ```
 
+## Vitrina (self-hosted artifacts)
+
+Sibling service, launchd `com.rancho.vitrina`, public on `127.0.0.1:4477` (Tailscale Funnel
+`https://whitemini.impala-symmetric.ts.net`, tailnet-only `:8444`), admin API on `127.0.0.1:4478`.
+Full design and CLI: [ARTIFACTS.md](ARTIFACTS.md).
+
+```bash
+# deploy after a change (runs on the Mac, from the repo clone)
+ssh rancho 'cd ~/chuck-norris-rancho && git pull && scripts/vitrina-deploy.sh'
+
+# health, logs, service
+ssh rancho 'curl -s localhost:4477/healthz; curl -s localhost:4478/healthz'
+ssh rancho 'tail -30 ~/vitrina/logs/vitrina.log ~/vitrina/logs/vitrina.err.log'
+ssh rancho 'launchctl kickstart -k gui/$(id -u)/com.rancho.vitrina'
+
+# what is published, by whom, for whom
+ssh rancho 'vitrina list'
+ssh rancho 'vitrina revoke <slug>'
+
+# funnel / tailnet mounts
+ssh rancho '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status'
+```
+
+Config: `~/.config/rancho/vitrina.env` (token, ports, base URLs), `~/.config/rancho/vitrina.json`
+(people + audiences + portal tokens). Data: `~/vitrina/data/` (back up with the Relay db).
+
 ## SSH Tunnel Cheat Sheet
 
 ```bash

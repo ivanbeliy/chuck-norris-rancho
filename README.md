@@ -39,7 +39,16 @@ Relay is a dumb pipe. All intelligence lives inside native Claude Code CLI sessi
 | `scripts/restart.sh` | Restart Relay service |
 | `scripts/status.sh` | Full system status |
 | `scripts/setup-ssh.sh` | Configure SSH (`mac` target) |
-| `scripts/test-n-merge.sh` | Test current feature branch (tsc + vitest), merge to `main`, push, delete branch |
+| `scripts/test-n-merge.sh` | Test current feature branch (relay: tsc + vitest; vitrina: node --test), merge to `main`, push, delete branch |
+| `scripts/vitrina-deploy.sh` | Deploy Vitrina (run **on** the Mac Mini from `~/chuck-norris-rancho`): mirror `vitrina/` to `~/vitrina`, install CLI + launchd, restart |
+
+## Vitrina — self-hosted artifacts
+
+`vitrina/` is a sibling service (launchd `com.rancho.vitrina`) that hosts self-contained
+HTML/React/Markdown pages authored by any Chuck and serves them to the family over Tailscale
+Funnel with sharing controls we own (`link` / `code` / `portal` / `private`, TTL, revoke).
+Every Chuck session publishes with the `vitrina` CLI via the user-level `publish-artifact`
+skill. See [docs/ARTIFACTS.md](docs/ARTIFACTS.md).
 
 ## Discord Commands
 

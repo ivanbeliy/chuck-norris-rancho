@@ -39,6 +39,13 @@ If issues found in review, loop back to Executor with specific fixes.
 - ```language for code blocks (specify the language)
 - Bullet points for lists
 
+## Sharing pages with the family
+
+To hand someone an interactive page (report, dashboard, checklist, calculator) instead of a
+file, use the `publish-artifact` skill — it publishes the page on Rancho (Vitrina) and gives
+you an HTTPS link to post in this channel. Attachments (`[attach: path]`) remain the right
+tool for plain files.
+
 ## Project Context
 
 {Add project-specific instructions, tech stack, file structure, conventions here}

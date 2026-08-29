@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<script src="/_a/tailwind.js"></script>
+<script src="/_a/react.js"></script>
+<script src="/_a/react-dom.js"></script>
+<script src="/_a/babel.js"></script>
+<style>body { margin: 0; }</style>
+</head>
+<body class="bg-white text-slate-900">
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback, Fragment } = React;
+{{component}}
+const __mount = typeof App !== 'undefined' ? App
+  : (typeof Artifact !== 'undefined' ? Artifact : null);
+if (!__mount) {
+  document.getElementById('root').innerHTML =
+    '<pre style="padding:20px;color:#b91c1c">Vitrina: очікував компонент з назвою App або Artifact.</pre>';
+} else {
+  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(__mount));
+}
+</script>
+</body>
+</html>

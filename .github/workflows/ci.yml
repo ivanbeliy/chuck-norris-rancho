@@ -25,3 +25,18 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+
+  vitrina:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vitrina
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm test

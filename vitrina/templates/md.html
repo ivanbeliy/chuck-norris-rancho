@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1a1d21; --mut:#6b7280; --line:#e3e6ea; --code:#f4f5f7; --accent:#3b6ea5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161a20; --fg:#e8eaed; --mut:#9aa1ab; --line:#2a3038; --code:#1e232a; --accent:#7aa9dd; }
+  }
+  body { background: var(--bg); color: var(--fg); margin: 0; padding: 32px 20px 80px;
+         font: 16px/1.65 ui-serif, Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+  h1,h2,h3 { font-family: ui-sans-serif, -apple-system, sans-serif; line-height: 1.25; margin: 1.6em 0 .5em; }
+  h1 { font-size: 1.8rem; margin-top: 0; } h2 { font-size: 1.35rem; } h3 { font-size: 1.12rem; }
+  a { color: var(--accent); }
+  code { background: var(--code); padding: .12em .35em; border-radius: 4px;
+         font: .88em/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background: var(--code); padding: 14px 16px; border-radius: 10px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 3px solid var(--line); margin: 1.2em 0; padding: .1em 0 .1em 1em; color: var(--mut); }
+  table { border-collapse: collapse; width: 100%; font-size: .95em; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+  img { max-width: 100%; }
+</style>
+</head>
+<body><div class="wrap">{{body}}</div></body>
+</html>

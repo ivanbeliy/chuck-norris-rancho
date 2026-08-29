@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вітрина — {{name}}</title>
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:title" content="Вітрина — {{name}}">
+<meta property="og:description" content="Усе, чим з тобою поділились">
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --fg:#0f1115; --mut:#6b7280; --line:#e3e6ea; --card:#fff; --accent:#3b6ea5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --fg:#e8eaed; --mut:#9aa1ab; --line:#252a31; --card:#161a20; --accent:#7aa9dd; }
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); margin: 0; padding: 28px 18px 60px;
+         font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--mut); font-size: 13px; margin-bottom: 26px; }
+  ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  li a { display: block; padding: 14px 16px; background: var(--card); border: 1px solid var(--line);
+         border-radius: 12px; text-decoration: none; color: inherit; }
+  li a:hover { border-color: var(--accent); }
+  .t { font-weight: 600; }
+  .d { color: var(--mut); font-size: 13px; margin-top: 2px; }
+  .m { color: var(--mut); font-size: 12px; margin-top: 6px; }
+  .empty { color: var(--mut); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Привіт, {{name}}</h1>
+  <div class="sub">Тут зʼявляється все, чим з тобою поділився Чак. Збережи це посилання в закладки.</div>
+  {{items}}
+</div>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "vitrina",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted artifact hosting for Rancho — publish, share and revoke pages from any Chuck channel",
+  "main": "src/index.js",
+  "bin": { "vitrina": "bin/vitrina" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": { "node": ">=22" }
+}

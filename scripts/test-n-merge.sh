@@ -2,7 +2,8 @@
 # test-n-merge — the standard pipeline for landing a change.
 #
 # Run it from a feature branch with your change ALREADY committed. It:
-#   1. runs the CI-equivalent checks locally (relay/: tsc --noEmit + vitest)
+#   1. runs the CI-equivalent checks locally (relay/: tsc --noEmit + vitest;
+#      vitrina/: node --test)
 #   2. only if green: merges the branch into main, pushes main
 #   3. deletes the feature branch (local + remote)
 #
@@ -36,6 +37,11 @@ echo "▶ Checks in relay/ (tsc --noEmit + vitest)…"
   cd relay
   [ -d node_modules ] || npm ci   # deps changed? run `npm ci` in relay/ yourself
   npx tsc --noEmit
+  npm test
+)
+echo "▶ Checks in vitrina/ (node --test)…"
+(
+  cd vitrina
   npm test
 )
 echo "✓ Checks passed"
