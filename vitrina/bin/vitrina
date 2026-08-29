@@ -183,7 +183,7 @@ async function main() {
       const project = flags.to_channel || flags.channel;
       if (!slug || !project) die('usage: vitrina share <slug> --to-channel <project>');
       const out = await api('POST', '/api/share', { slug, project, text: flags.text });
-      return console.log(`shared ${out.slug} -> #${out.project}`);
+      return console.log(`shared ${out.shared} -> #${out.project}`);
     }
     case 'portals': {
       const out = await api('GET', '/api/portals');
